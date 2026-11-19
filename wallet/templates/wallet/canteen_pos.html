@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CanteenPay | Canteen Scanner POS</title>
+    <script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
+    <style>
+        body { font-family: system-ui, sans-serif; background: #111827; color: #f9fafb; margin: 0; padding: 16px; }
+        .container { max-width: 460px; margin: 0 auto; background: #1f2937; padding: 20px; border-radius: 12px; }
+        h2 { margin-top: 0; text-align: center; color: #10b981; }
+        #reader { width: 100%; border-radius: 8px; overflow: hidden; background: #000; }
+        label { display: block; margin: 12px 0 4px; font-size: 0.9rem; color: #d1d5db; }
+        input { width: 100%; padding: 12px; border-radius: 8px; border: 1px solid #374151; background: #374151; color: #fff; font-size: 1.1rem; box-sizing: border-box; }
+        button { width: 100%; padding: 14px; background: #10b981; color: #fff; font-weight: 700; border: none; border-radius: 8px; font-size: 1.1rem; margin-top: 16px; cursor: pointer; }
+        .info-card { background: #374151; padding: 12px; border-radius: 8px; margin-top: 12px; display: none; }
+        .alert { padding: 12px; border-radius: 8px; margin-top: 14px; font-weight: 600; text-align: center; display: none; }
+        .ok { background: #065f46; color: #a7f3d0; }
+        .err { background: #7f1d1d; color: #fecaca; }
+    </style>
+</head>
+<body>
+<div class="container">
+    <h2>Canteen QR Checkout</h2>
+    <div id="reader"></div>
+
+    <label for="scannedId">Student ID (Auto-filled by QR Scan)</label>
+    <input type="text" id="scannedId" placeholder="Scan ID card or type ID" onchange="fetchStudentInfo()">
+
+    <div id="studentInfo" class="info-card"></div>
+
+    <label for="orderAmount">Purchase Amount (UGX)</label>
+    <input type="number" id="orderAmount" placeholder="e.g. 2500" min="100" step="100">
+
+    <label for="itemsNote">Items Bought (Optional)</label>
+    <input type="text" id="itemsNote" placeholder="e.g. Chapati + Soda">
+
+    <label for="studentPin">Student 4-Digit PIN</label>
+    <input type="password" id="studentPin" maxlength="4" inputmode="numeric" placeholder="****">
+
+    <button onclick="processCheckout()">Charge Student Wallet</button>
+    <button type="button" onclick="checkBalanceOnly()" style="background:#3b82f6; margin-top:10px;">
+        Check Balance Only (Requires PIN)
+    </button>
+    <div id="alertBox" class="alert"></div>
+    <div id="balanceBox" class="alert" style="display:none;"></div>
+</div>
+
+<script>
+    function onScanSuccess(decodedText) {
+        document.getElementById("scannedId").value = decodedText.trim();
+        fetchStudentInfo();
+    }
+
+    const html5QrcodeScanner = new Html5QrcodeScanner("reader", { fps: 10, qrbox: 220 });
+    html5QrcodeScanner.render(onScanSuccess);
+
+    async function fetchStudentInfo() {
+        const regNo = document.getElementById("scannedId").value.trim();
+        const infoDiv = document.getElementById("studentInfo");
+        if (!regNo) return;
+
+        const res = await fetch(`/api/student/lookup/?reg_no=${encodeURIComponent(regNo)}`);
+        const data = await res.json();
+
+        infoDiv.style.display = "block";
+        if (res.ok) {
+            infoDiv.innerHTML = `<strong>${data.full_name}</strong> (${data.school})<br><span style="color:#10b981;">ID Verified — Enter PIN to buy or check balance</span>`;
+        } else {
+            infoDiv.innerHTML = `<span style="color:#fca5a5;">${data.error}</span>`;
+        }
+    }
+
+    async function checkBalanceOnly() {
+        const alertBox = document.getElementById("alertBox");
+        const payload = {
+            student_reg_no: document.getElementById("scannedId").value.trim(),
+            pin: document.getElementById("studentPin").value.trim()
+        };
+
+        if (!payload.student_reg_no || !payload.pin) {
+            alertBox.style.display = "block";
+            alertBox.className = "alert err";
+            alertBox.innerText = "Please scan Student ID and enter 4-digit PIN first.";
+            return;
+        }
+
+        const res = await fetch("/api/student/balance/", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(payload)
+        });
+        const data = await res.json();
+
+        alertBox.style.display = "block";
+        if (res.ok) {
+            alertBox.className = "alert ok";
+            alertBox.innerHTML = `${data.student_name}<br>Wallet Balance: UGX ${Number(data.wallet_balance).toLocaleString()}<br>Available to Spend Today: UGX ${Number(data.remaining_daily_limit).toLocaleString()}`;
+            document.getElementById("studentPin").value = "";
+        } else {
+            alertBox.className = "alert err";
+            alertBox.innerText = data.error || "Could not verify PIN.";
+        }
+    }
+
+    async function processCheckout() {
+        const alertBox = document.getElementById("alertBox");
+        const payload = {
+            student_reg_no: document.getElementById("scannedId").value.trim(),
+            amount: document.getElementById("orderAmount").value,
+            items_note: document.getElementById("itemsNote").value.trim(),
+            pin: document.getElementById("studentPin").value.trim()
+        };
+
+        const res = await fetch("/api/canteen/checkout/", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(payload)
+        });
+        const data = await res.json();
+
+        alertBox.style.display = "block";
+        if (res.ok) {
+            alertBox.className = "alert ok";
+            alertBox.innerText = `APPROVED! New Balance: UGX ${Number(data.new_balance).toLocaleString()}`;
+            document.getElementById("orderAmount").value = "";
+            document.getElementById("itemsNote").value = "";
+            document.getElementById("studentPin").value = "";
+            fetchStudentInfo();
+        } else {
+            alertBox.className = "alert err";
+            alertBox.innerText = data.error || "Transaction Declined";
+        }
+    }
+</script>
+</body>
+</html>

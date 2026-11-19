@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>CanteenPay | Bursar Daily Settlement Report</title>
+    <style>
+        body { font-family: system-ui, sans-serif; background: #f9fafb; padding: 24px; color: #111827; }
+        .wrapper { max-width: 900px; margin: 0 auto; background: #fff; padding: 24px; border-radius: 10px; box-shadow: 0 2px 8px rgba(0,0,0,0.06); }
+        .header { display: flex; justify-content: space-between; align-items: center; border-bottom: 2px solid #e5e7eb; padding-bottom: 14px; }
+        table { width: 100%; border-collapse: collapse; margin-top: 20px; }
+        th, td { padding: 12px; border-bottom: 1px solid #e5e7eb; text-align: left; }
+        th { background: #f3f4f6; font-size: 0.9rem; }
+        .money { font-family: monospace; font-weight: bold; font-size: 1rem; }
+        .btn { padding: 8px 16px; background: #111827; color: #fff; border: none; border-radius: 6px; cursor: pointer; }
+        @media print { .no-print { display: none; } }
+    </style>
+</head>
+<body>
+<div class="wrapper">
+    <div class="header">
+        <div>
+            <h2 style="margin:0;">Daily Canteen &amp; Pocket Money Settlement</h2>
+            <p style="margin:4px 0 0; color:#6b7280;">Date: <strong>{{ report_date }}</strong></p>
+        </div>
+        <div class="no-print">
+            <form method="get" style="display:inline;">
+                <input type="date" name="date" value="{{ report_date|date:'Y-m-d' }}" style="padding:7px;">
+                <button type="submit" class="btn">Filter</button>
+            </form>
+            <button onclick="window.print()" class="btn" style="background:#059669;">Print Report</button>
+        </div>
+    </div>
+
+    <table>
+        <thead>
+            <tr>
+                <th>School Name</th>
+                <th>Parent Top-Ups (Inflow)</th>
+                <th>Canteen Sales (Payout Due)</th>
+                <th>Your Platform Fees</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for row in schools_data %}
+            <tr>
+                <td><strong>{{ row.school_name }}</strong></td>
+                <td class="money">UGX {{ row.parent_topups|floatformat:0 }} <small>({{ row.topup_count }} txns)</small></td>
+                <td class="money" style="color:#059669;">UGX {{ row.canteen_sales|floatformat:0 }} <small>({{ row.order_count }} sales)</small></td>
+                <td class="money" style="color:#2563eb;">UGX {{ row.platform_revenue|floatformat:0 }}</td>
+            </tr>
+            {% empty %}
+            <tr><td colspan="4">No schools registered yet.</td></tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+</body>
+</html>

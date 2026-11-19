@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>CanteenPay | Printable QR Sticker Sheet</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 15px; }
+        .no-print { margin-bottom: 16px; padding: 12px; background: #f3f4f6; border-radius: 6px; }
+        .grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; }
+        .sticker {
+            border: 1px dashed #9ca3af;
+            border-radius: 8px;
+            padding: 10px;
+            text-align: center;
+            page-break-inside: avoid;
+        }
+        .sticker img { width: 120px; height: 120px; }
+        .name { font-weight: bold; font-size: 13px; margin-top: 4px; }
+        .reg { font-size: 12px; color: #374151; font-family: monospace; }
+        .school { font-size: 10px; color: #6b7280; margin-top: 2px; }
+        @media print {
+            .no-print { display: none; }
+            body { margin: 0; }
+        }
+    </style>
+</head>
+<body>
+    <div class="no-print">
+        <button onclick="window.print()" style="padding: 10px 20px; font-size: 15px; font-weight: bold; cursor: pointer;">
+            Print Sticker Sheet (A4)
+        </button>
+        <span style="margin-left: 12px; color: #4b5563;">Tip: Print on A4 sticker label paper and place on the back of student ID cards.</span>
+    </div>
+
+    <div class="grid">
+        {% for s in stickers %}
+        <div class="sticker">
+            <img src="data:image/png;base64,{{ s.qr_base64 }}" alt="QR">
+            <div class="name">{{ s.full_name }}</div>
+            <div class="reg">{{ s.reg_no }}</div>
+            <div class="school">{{ s.school }}</div>
+        </div>
+        {% endfor %}
+    </div>
+</body>
+</html>

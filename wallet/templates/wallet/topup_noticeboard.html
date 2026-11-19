@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>CanteenPay | Student Pocket Money Noticeboard</title>
+    <style>
+        body { font-family: Arial, sans-serif; background: #f9fafb; padding: 24px; color: #111827; }
+        .sheet { max-width: 800px; margin: 0 auto; background: #fff; padding: 28px; border: 2px solid #111827; border-radius: 8px; }
+        .top-bar { display: flex; justify-content: space-between; align-items: center; border-bottom: 2px solid #065f46; padding-bottom: 12px; margin-bottom: 18px; }
+        h1 { margin: 0; font-size: 1.35rem; color: #065f46; text-transform: uppercase; }
+        .sub { margin: 4px 0 0; font-size: 0.95rem; color: #374151; }
+        table { width: 100%; border-collapse: collapse; margin-top: 12px; }
+        th, td { padding: 10px 12px; border: 1px solid #d1d5db; text-align: left; font-size: 0.95rem; }
+        th { background: #ecfdf5; color: #065f46; }
+        .badge { background: #d1fae5; color: #065f46; font-weight: bold; padding: 4px 10px; border-radius: 4px; font-size: 0.85rem; }
+        .btn { padding: 8px 16px; background: #111827; color: #fff; border: none; border-radius: 6px; cursor: pointer; font-weight: bold; }
+        .footer-note { margin-top: 18px; font-size: 0.85rem; color: #4b5563; font-style: italic; }
+        @media print {
+            body { background: #fff; padding: 0; }
+            .sheet { border: none; padding: 0; }
+            .no-print { display: none; }
+        }
+    </style>
+</head>
+<body>
+<div class="sheet">
+    <div class="top-bar">
+        <div>
+            <h1>Canteen Wallet Top-Up Noticeboard</h1>
+            <p class="sub">Date: <strong>{{ report_date }}</strong> &mdash; Present your School ID & 4-Digit PIN at the Canteen</p>
+        </div>
+        <div class="no-print">
+            <form method="get" style="display:inline;">
+                <input type="date" name="date" value="{{ report_date|date:'Y-m-d' }}" style="padding:6px;">
+                <button type="submit" class="btn">Filter</button>
+            </form>
+            <button onclick="window.print()" class="btn" style="background:#059669;">Print Notice</button>
+        </div>
+    </div>
+
+    <table>
+        <thead>
+            <tr>
+                <th style="width: 60px;">#</th>
+                <th>Student Reg. ID</th>
+                <th>Student Full Name</th>
+                <th>School</th>
+                <th>Wallet Status</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for student in credited_students %}
+            <tr>
+                <td>{{ forloop.counter }}</td>
+                <td style="font-family: monospace; font-weight: bold;">{{ student.student_reg_no }}</td>
+                <td><strong>{{ student.full_name }}</strong></td>
+                <td>{{ student.school.name }}</td>
+                <td><span class="badge">CREDITED & ELIGIBLE</span></td>
+            </tr>
+            {% empty %}
+            <tr>
+                <td colspan="5" style="text-align:center; padding:20px; color:#6b7280;">
+                    No pocket money top-ups recorded for {{ report_date }}.
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+
+    <p class="footer-note">
+        Privacy Notice: Exact wallet balances are confidential. Visit the canteen counter with your Student ID card and 4-digit secret PIN to check your balance or make purchases.
+    </p>
+</div>
+</body>
+</html>

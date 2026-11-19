@@ -1,0 +1,239 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>CanteenPay – School Proposal Letter</title>
+<style>
+  @page { size: A4; margin: 0; }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: "Georgia", serif;
+    font-size: 11.5pt;
+    color: #1a1a1a;
+    background: #fff;
+    width: 210mm;
+    min-height: 297mm;
+    padding: 18mm 20mm 18mm 20mm;
+  }
+
+  /* ── Header ── */
+  .header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    border-bottom: 2.5px solid #1a6b3c;
+    padding-bottom: 10px;
+    margin-bottom: 14px;
+  }
+  .brand { font-size: 22pt; font-weight: bold; color: #1a6b3c; letter-spacing: 1px; }
+  .brand span { color: #f5a623; }
+  .brand-sub { font-size: 9pt; color: #555; margin-top: 2px; }
+  .date-block { text-align: right; font-size: 10pt; color: #444; line-height: 1.6; }
+
+  /* ── Addressee ── */
+  .addressee { margin-bottom: 14px; line-height: 1.7; font-size: 10.5pt; }
+  .addressee strong { display: block; }
+
+  /* ── Subject line ── */
+  .subject {
+    font-weight: bold;
+    font-size: 11pt;
+    text-decoration: underline;
+    margin-bottom: 12px;
+  }
+
+  /* ── Body ── */
+  p { margin-bottom: 10px; line-height: 1.65; text-align: justify; }
+
+  /* ── How It Works table ── */
+  .how-table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 12px 0;
+    font-size: 10.5pt;
+  }
+  .how-table th {
+    background: #1a6b3c;
+    color: #fff;
+    padding: 6px 10px;
+    text-align: left;
+  }
+  .how-table td {
+    padding: 6px 10px;
+    border-bottom: 1px solid #ddd;
+    vertical-align: top;
+  }
+  .how-table tr:nth-child(even) td { background: #f7faf8; }
+
+  /* ── Highlights box ── */
+  .highlights {
+    border: 1.5px solid #1a6b3c;
+    border-radius: 4px;
+    padding: 10px 14px;
+    margin: 12px 0;
+    background: #f0f9f4;
+  }
+  .highlights ul { padding-left: 18px; }
+  .highlights li { margin-bottom: 5px; line-height: 1.55; font-size: 10.5pt; }
+
+  /* ── Pilot offer banner ── */
+  .pilot {
+    background: #fff8e1;
+    border-left: 4px solid #f5a623;
+    padding: 9px 14px;
+    margin: 12px 0;
+    font-size: 10.5pt;
+    line-height: 1.6;
+  }
+  .pilot strong { color: #b8860b; }
+
+  /* ── Signature block ── */
+  .sig-section {
+    margin-top: 18px;
+    display: flex;
+    justify-content: space-between;
+    gap: 20px;
+  }
+  .sig-box { flex: 1; }
+  .sig-box .label { font-size: 9.5pt; color: #555; margin-bottom: 28px; }
+  .sig-line {
+    border-top: 1px solid #333;
+    padding-top: 4px;
+    font-size: 9.5pt;
+    color: #333;
+  }
+
+  /* ── Footer ── */
+  .footer {
+    margin-top: 16px;
+    border-top: 1px solid #ccc;
+    padding-top: 7px;
+    font-size: 8.5pt;
+    color: #777;
+    text-align: center;
+  }
+
+  /* ── Print button (hidden when printing) ── */
+  .print-btn {
+    display: block;
+    margin: 0 auto 18px auto;
+    padding: 10px 32px;
+    background: #1a6b3c;
+    color: #fff;
+    border: none;
+    border-radius: 4px;
+    font-size: 12pt;
+    cursor: pointer;
+    font-family: sans-serif;
+  }
+  @media print { .print-btn { display: none; } }
+</style>
+</head>
+<body>
+
+<button class="print-btn" onclick="window.print()">🖨 Print / Save as PDF</button>
+
+<!-- Header -->
+<div class="header">
+  <div>
+    <div class="brand">Canteen<span>Pay</span></div>
+    <div class="brand-sub">School Wallet &amp; Canteen Management System</div>
+  </div>
+  <div class="date-block">
+    <strong>Date:</strong> ___________________<br>
+    <strong>Ref:</strong> CP/PROP/2026/001<br>
+    <strong>Email:</strong> hello@canteenpay.ug
+  </div>
+</div>
+
+<!-- Addressee -->
+<div class="addressee">
+  <strong>The Director / Head Teacher / Bursar,</strong>
+  ___________________________________________<br>
+  ___________________________________________<br>
+  P.O. Box ___________, Uganda.
+</div>
+
+<!-- Subject -->
+<div class="subject">RE: PROPOSAL TO INTRODUCE CANTEENPAY — A CASHLESS CANTEEN WALLET SYSTEM FOR YOUR SCHOOL</div>
+
+<!-- Body -->
+<p>Dear Sir / Madam,</p>
+
+<p>We write to formally introduce <strong>CanteenPay</strong>, a simple, secure, and locally built digital wallet system designed specifically for Ugandan boarding and day schools. CanteenPay eliminates the need for students to carry cash on school premises by enabling parents to top up their child's canteen wallet remotely via <strong>MTN Mobile Money or Airtel Money</strong>, and allowing students to spend at the canteen using only their <strong>Student ID and a 4-digit PIN</strong>.</p>
+
+<!-- How It Works -->
+<table class="how-table">
+  <tr>
+    <th>Step</th><th>Who</th><th>What Happens</th>
+  </tr>
+  <tr>
+    <td>1</td>
+    <td>Parent</td>
+    <td>Visits the school's top-up page, enters the student's registration number and amount, then approves the Mobile Money prompt on their phone.</td>
+  </tr>
+  <tr>
+    <td>2</td>
+    <td>System</td>
+    <td>Wallet is credited instantly. Parent receives an SMS receipt. No cash changes hands.</td>
+  </tr>
+  <tr>
+    <td>3</td>
+    <td>Student</td>
+    <td>At the canteen, the cashier scans the student's QR code (or types the ID), enters the amount, and the student confirms with their PIN.</td>
+  </tr>
+  <tr>
+    <td>4</td>
+    <td>Bursar</td>
+    <td>Views a real-time daily settlement report showing all sales, top-ups, and platform fees — printable in one click.</td>
+  </tr>
+</table>
+
+<!-- Highlights -->
+<div class="highlights">
+  <strong>Key Benefits for Your School:</strong>
+  <ul>
+    <li>✅ <strong>No cash handling</strong> — eliminates theft, loss, and end-of-day cash reconciliation errors.</li>
+    <li>✅ <strong>Daily spending limits</strong> — school sets a per-student daily cap (e.g. UGX 10,000) to prevent overspending.</li>
+    <li>✅ <strong>Works with existing Student IDs</strong> — no new cards or hardware required beyond a tablet or smartphone at the canteen.</li>
+    <li>✅ <strong>Instant parent visibility</strong> — parents receive SMS confirmation every time money is loaded or spent.</li>
+    <li>✅ <strong>Built for Uganda</strong> — supports MTN MoMo &amp; Airtel Money, UGX currency, and local phone number formats.</li>
+  </ul>
+</div>
+
+<!-- Pilot offer -->
+<div class="pilot">
+  <strong>🎁 Zero-Cost Pilot Offer:</strong> We are currently onboarding our first three (3) partner schools at <strong>no setup fee and no monthly charge</strong> for the first school term. All we ask is your cooperation in running the pilot and providing feedback. After the pilot, the only cost is a flat <strong>UGX 500 per top-up transaction</strong> — paid by the parent, not the school.
+</div>
+
+<p>We would be delighted to schedule a 30-minute demonstration at your school at a time convenient for you. Please contact us on the details below to arrange a visit or request a live demo link.</p>
+
+<p>We look forward to partnering with your institution to make canteen management safer, faster, and more transparent for parents, students, and staff alike.</p>
+
+<p>Yours faithfully,</p>
+
+<!-- Signature block -->
+<div class="sig-section">
+  <div class="sig-box">
+    <div class="label">Signed (CanteenPay Representative):</div>
+    <div class="sig-line">Name: ___________________________</div><br>
+    <div class="sig-line">Title: ____________________________</div><br>
+    <div class="sig-line">Phone: ___________________________</div>
+  </div>
+  <div class="sig-box">
+    <div class="label">Received &amp; Acknowledged (School):</div>
+    <div class="sig-line">Name: ___________________________</div><br>
+    <div class="sig-line">Title: ____________________________</div><br>
+    <div class="sig-line">Date &amp; Stamp: ___________________</div>
+  </div>
+</div>
+
+<!-- Footer -->
+<div class="footer">
+  CanteenPay | hello@canteenpay.ug | Uganda &nbsp;|&nbsp;
+  Powered by MTN MoMo &amp; Airtel Money &nbsp;|&nbsp;
+  <em>Keeping your child's canteen money safe.</em>
+</div>
+
+</body>
+</html>

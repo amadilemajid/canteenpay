@@ -86,6 +86,11 @@
             if (res.ok) {
                 statusBox.className = "status-box success";
                 statusBox.innerText = data.message;
+                if (data.redirect_url) {
+                    setTimeout(() => {
+                        window.open(data.redirect_url, "_blank");
+                    }, 800);
+                }
             } else {
                 statusBox.className = "status-box error";
                 statusBox.innerText = data.error || "Payment failed.";

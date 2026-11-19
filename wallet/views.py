@@ -209,10 +209,16 @@ def initiate_parent_topup(request):
             )
 
             if flw_res.get("status") == "success":
+                redirect_url = (
+                    flw_res.get("meta", {})
+                    .get("authorization", {})
+                    .get("redirect")
+                )
                 return JsonResponse(
                     {
                         "status": "PROMPT_SENT",
                         "message": f"Enter your Mobile Money PIN on {payer_phone} to send UGX {int(amount):,} directly to {student.school.name} (+UGX {int(platform_fee)} fee).",
+                        "redirect_url": redirect_url,
                         "reference_id": str(momo_ref_id),
                         "student_name": student.full_name,
                         "school": student.school.name,

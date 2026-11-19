@@ -217,7 +217,7 @@ def initiate_parent_topup(request):
                 return JsonResponse(
                     {
                         "status": "PROMPT_SENT",
-                        "message": f"Click to authorize or enter your Mobile Money PIN on {payer_phone} to send UGX {int(amount):,} directly to {student.school.name} (+UGX {int(platform_fee)} fee).",
+                        "message": f"Click the authorization button below to complete your UGX {int(amount):,} top-up for {student.school.name} (+UGX {int(platform_fee)} fee).",
                         "redirect_url": redirect_url,
                         "reference_id": str(momo_ref_id),
                         "student_name": student.full_name,

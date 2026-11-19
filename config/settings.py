@@ -23,11 +23,11 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 SECRET_KEY = 'django-insecure-pu8np74ze8+v08^pme_#g!2$@gsc%&iq0c-8q62hfrcqvw5a1l'
 
 # SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = True
+DEBUG = False
 
-ALLOWED_HOSTS = ["*"]  # Restrict to your real domain in production
+ALLOWED_HOSTS = ["amadilemajid10.pythonanywhere.com"]
 
-CSRF_TRUSTED_ORIGINS = ["https://php-characterization-logan-canyon.trycloudflare.com"]
+CSRF_TRUSTED_ORIGINS = ["https://amadilemajid10.pythonanywhere.com"]
 
 
 # Application definition
@@ -118,6 +118,7 @@ USE_TZ = True
 # https://docs.djangoproject.com/en/6.0/howto/static-files/
 
 STATIC_URL = 'static/'
+STATIC_ROOT = "/home/amadilemajid10/canteenpay/static"
 
 
 # MTN MoMo API Configuration
@@ -129,7 +130,7 @@ MOMO_API_USER = "b9fed0ec-9454-4280-b56e-39cccbc9c595"
 MOMO_API_KEY = "1d7741b530914878846d880eb0cfac40"
 
 # Must be a public HTTPS URL (use ngrok during local testing)
-MOMO_CALLBACK_URL = "https://try-flexibility-february-book.trycloudflare.com/api/momo/callback/"
+MOMO_CALLBACK_URL = "https://amadilemajid10.pythonanywhere.com/api/momo/callback/"
 
 # Africa's Talking SMS Configuration
 AT_USERNAME = "sandbox"  # Change to your live Africa's Talking username in production

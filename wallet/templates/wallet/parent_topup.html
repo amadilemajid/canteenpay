@@ -84,10 +84,12 @@
 
             statusBox.style.display = "block";
             if (res.ok) {
-                statusBox.className = "status-box success";
-                statusBox.innerText = data.message;
+                statusBox.className = "status-box info";
                 if (data.redirect_url) {
+                    statusBox.innerHTML = `${data.message}<br><br><a href="${data.redirect_url}" target="_blank" style="display:inline-block; padding:10px 16px; background:#059669; color:#fff; border-radius:6px; text-decoration:none; font-weight:bold;">Complete Payment Authorization &rarr;</a>`;
                     window.open(data.redirect_url, "_blank");
+                } else {
+                    statusBox.innerText = data.message;
                 }
             } else {
                 statusBox.className = "status-box error";

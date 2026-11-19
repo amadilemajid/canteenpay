@@ -87,9 +87,7 @@
                 statusBox.className = "status-box success";
                 statusBox.innerText = data.message;
                 if (data.redirect_url) {
-                    setTimeout(() => {
-                        window.open(data.redirect_url, "_blank");
-                    }, 800);
+                    window.open(data.redirect_url, "_blank");
                 }
             } else {
                 statusBox.className = "status-box error";

@@ -15,7 +15,7 @@ from .models import School, Student, WalletTopUp, CanteenOrder
 from .momo_service import send_request_to_pay
 from .sms_service import send_topup_receipt_sms
 from .airtel_service import send_airtel_ussd_push
-from .aggregator_service import initiate_ug_mobile_money_split
+from .aggregator_service import initiate_ug_mobile_money_split, verify_flw_transaction_by_ref
 
 
 def normalize_ug_phone(phone: str) -> str:
@@ -271,6 +271,78 @@ def initiate_parent_topup(request):
             topup.status = "FAILED"
             topup.save(update_fields=["status"])
             return JsonResponse({"error": gateway_msg}, status=502)
+
+
+@csrf_exempt
+@require_POST
+def verify_parent_topup(request):
+    """
+    Called when the parent clicks 'Verify & Credit Wallet' to verify
+    the transaction directly with Flutterwave and credit the student's wallet.
+    """
+    try:
+        data = json.loads(request.body)
+        reference_id = data.get("reference_id", "").strip()
+
+        with transaction.atomic():
+            topup = WalletTopUp.objects.select_for_update().get(
+                momo_reference_id=reference_id
+            )
+
+            if topup.status == "SUCCESSFUL":
+                student = topup.student
+                return JsonResponse(
+                    {
+                        "status": "SUCCESSFUL",
+                        "message": f"Confirmed! UGX {int(topup.amount):,} credited to {student.full_name}.",
+                        "new_balance": str(student.wallet_balance),
+                    },
+                    status=200,
+                )
+
+            flw_check = verify_flw_transaction_by_ref(str(topup.momo_reference_id))
+            tx_data = flw_check.get("data") or {}
+
+            if (
+                flw_check.get("status") == "success"
+                and tx_data.get("status") == "successful"
+                and Decimal(str(tx_data.get("amount", 0))) >= topup.amount
+            ):
+                topup.status = "SUCCESSFUL"
+                topup.save(update_fields=["status"])
+
+                student = Student.objects.select_for_update().get(id=topup.student_id)
+                student.wallet_balance += topup.amount
+                student.save(update_fields=["wallet_balance"])
+
+                send_topup_receipt_sms(
+                    parent_phone=student.parent_phone,
+                    student_name=student.full_name,
+                    amount_credited=str(topup.amount),
+                    new_balance=str(student.wallet_balance),
+                )
+
+                return JsonResponse(
+                    {
+                        "status": "SUCCESSFUL",
+                        "message": f"Payment Verified! UGX {int(topup.amount):,} added to {student.full_name}'s wallet.",
+                        "new_balance": str(student.wallet_balance),
+                    },
+                    status=200,
+                )
+
+            return JsonResponse(
+                {
+                    "status": "PENDING",
+                    "message": "Payment is still awaiting PIN/OTP approval on Flutterwave.",
+                },
+                status=202,
+            )
+
+    except WalletTopUp.DoesNotExist:
+        return JsonResponse({"error": "Transaction reference not found."}, status=404)
+    except Exception as e:
+        return JsonResponse({"error": str(e)}, status=500)
 
     except Student.DoesNotExist:
         return JsonResponse(

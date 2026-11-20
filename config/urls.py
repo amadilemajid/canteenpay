@@ -11,6 +11,7 @@ from wallet.views import (
     momo_callback_webhook,
     airtel_callback_webhook,
     aggregator_callback_webhook,
+    verify_parent_topup,
     check_student_balance,
 )
 
@@ -30,4 +31,5 @@ urlpatterns = [
     path("api/momo/callback/", momo_callback_webhook, name="momo_callback"),
     path("api/airtel/callback/", airtel_callback_webhook, name="airtel_callback"),
     path("api/aggregator/callback/", aggregator_callback_webhook, name="aggregator_callback"),
+    path("api/parent/topup/verify/", verify_parent_topup, name="verify_parent_topup"),
 ]

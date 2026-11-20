@@ -16,6 +16,9 @@
         .status-box { margin-top: 16px; padding: 12px; border-radius: 8px; font-size: 0.92rem; display: none; }
         .error { background: #fef2f2; color: #991b1b; border: 1px solid #f87171; }
         .success { background: #eff6ff; color: #1e40af; border: 1px solid #60a5fa; }
+        .alert { margin-top: 16px; padding: 12px; border-radius: 8px; font-size: 0.92rem; display: none; }
+        .alert.info { background: #eff6ff; color: #1e40af; border: 1px solid #60a5fa; }
+        .alert.ok { background: #d1fae5; color: #065f46; border: 1px solid #10b981; }
     </style>
 </head>
 <body>
@@ -85,12 +88,16 @@
             statusBox.style.display = "block";
             if (res.ok) {
                 statusBox.className = "alert info";
+                let html = `${data.message}<br><br>`;
                 if (data.redirect_url) {
-                    statusBox.innerHTML = `${data.message}<br><br><a href="${data.redirect_url}" target="_blank" style="display:inline-block; padding:10px 16px; background:#059669; color:#fff; border-radius:6px; text-decoration:none; font-weight:bold;">Complete Payment Authorization &rarr;</a>`;
-                } else {
-                    statusBox.innerText = data.message;
+                    html += `<a href="${data.redirect_url}" target="_blank" style="display:inline-block; padding:10px 14px; background:#059669; color:#fff; border-radius:6px; text-decoration:none; font-weight:bold; margin-right:8px;">1. Authorize OTP &rarr;</a>`;
                 }
+                html += `<button type="button" onclick="verifyTopUp('${data.reference_id}')" style="padding:10px 14px; background:#111827; color:#fff; border:none; border-radius:6px; font-weight:bold; cursor:pointer;">2. Verify &amp; Credit Wallet</button>`;
+                statusBox.innerHTML = html;
             } else {
+                statusBox.className = "status-box error";
+                statusBox.innerText = data.error || "Payment failed.";
+            }
                 statusBox.className = "status-box error";
                 statusBox.innerText = data.error || "Payment failed.";
             }
@@ -101,6 +108,24 @@
         } finally {
             btn.disabled = false;
             detectNetwork();
+        }
+    }
+
+    async function verifyTopUp(refId) {
+        const alertBox = document.getElementById("statusBox");
+        const res = await fetch("/api/parent/topup/verify/", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ reference_id: refId })
+        });
+        const data = await res.json();
+        alertBox.style.display = "block";
+        if (data.status === "SUCCESSFUL") {
+            alertBox.className = "alert ok";
+            alertBox.innerText = `${data.message} (New Balance: UGX ${Number(data.new_balance).toLocaleString()})`;
+        } else {
+            alertBox.className = "alert info";
+            alertBox.innerText = data.message || data.error;
         }
     }
 

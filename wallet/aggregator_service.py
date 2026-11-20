@@ -54,3 +54,20 @@ def initiate_ug_mobile_money_split(
             "status": "error",
             "message": f"Flutterwave returned non-JSON response: {response.text[:200]}"
         }
+
+
+def verify_flw_transaction_by_ref(tx_ref: str) -> dict:
+    """
+    Directly queries Flutterwave to verify a transaction's final status
+    using our WalletTopUp momo_reference_id (tx_ref).
+    """
+    url = f"{settings.FLW_BASE_URL}/transactions/verify_by_reference?tx_ref={tx_ref}"
+    headers = {
+        "Authorization": f"Bearer {settings.FLW_SECRET_KEY}",
+        "Content-Type": "application/json",
+    }
+    try:
+        response = requests.get(url, headers=headers, timeout=20)
+        return response.json()
+    except Exception as e:
+        return {"status": "error", "message": str(e)}

@@ -272,6 +272,13 @@ def initiate_parent_topup(request):
             topup.save(update_fields=["status"])
             return JsonResponse({"error": gateway_msg}, status=502)
 
+    except Student.DoesNotExist:
+        return JsonResponse(
+            {"error": "Student registration number not found."}, status=404
+        )
+    except Exception as e:
+        return JsonResponse({"error": str(e)}, status=500)
+
 
 @csrf_exempt
 @require_POST
@@ -341,13 +348,6 @@ def verify_parent_topup(request):
 
     except WalletTopUp.DoesNotExist:
         return JsonResponse({"error": "Transaction reference not found."}, status=404)
-    except Exception as e:
-        return JsonResponse({"error": str(e)}, status=500)
-
-    except Student.DoesNotExist:
-        return JsonResponse(
-            {"error": "Student registration number not found."}, status=404
-        )
     except Exception as e:
         return JsonResponse({"error": str(e)}, status=500)
 

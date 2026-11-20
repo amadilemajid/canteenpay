@@ -3,6 +3,7 @@ from django.urls import path
 from wallet.views import (
     parent_topup_page,
     canteen_pos_page,
+    policies_page,
     bursar_daily_report,
     daily_topup_noticeboard,
     lookup_student,
@@ -20,6 +21,7 @@ urlpatterns = [
     # Web Pages
     path("", parent_topup_page, name="parent_topup_page"),
     path("pos/", canteen_pos_page, name="canteen_pos_page"),
+    path("policies/", policies_page, name="policies_page"),
     path("report/daily/", bursar_daily_report, name="bursar_daily_report"),
     path("report/topup-noticeboard/", daily_topup_noticeboard, name="daily_topup_noticeboard"),
     path("report/noticeboard/", daily_topup_noticeboard, name="daily_topup_noticeboard"),

@@ -411,6 +411,11 @@ def canteen_pos_page(request):
     return render(request, "wallet/canteen_pos.html")
 
 
+@never_cache
+def policies_page(request):
+    return render(request, "wallet/policies.html")
+
+
 @require_GET
 def lookup_student(request):
     reg_no = request.GET.get("reg_no", "").strip()

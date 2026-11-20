@@ -119,7 +119,7 @@ async function submitTopUp() {
             alertBox.className = "alert info";
             let html = `${data.message}<br><br>`;
             if (data.redirect_url) {
-                html += `<a href="${data.redirect_url}" target="_blank" style="display:inline-block; padding:10px 14px; background:#059669; color:#fff; border-radius:6px; text-decoration:none; font-weight:bold; margin-right:8px; margin-bottom:6px;">1. Authorize OTP &rarr;</a>`;
+                html += `<a href="${data.redirect_url}" target="_blank" rel="noopener noreferrer" style="display:inline-block; padding:10px 14px; background:#059669; color:#fff; border-radius:6px; text-decoration:none; font-weight:bold; margin-right:8px; margin-bottom:6px;">1. Authorize OTP &rarr;</a>`;
             }
             html += `<button type="button" onclick="verifyTopUp('${data.reference_id}')" style="padding:10px 14px; background:#111827; color:#fff; border:none; border-radius:6px; font-weight:bold; cursor:pointer;">2. Verify &amp; Credit Wallet</button>`;
             alertBox.innerHTML = html;

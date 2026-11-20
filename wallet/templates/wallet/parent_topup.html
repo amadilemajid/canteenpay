@@ -3,6 +3,10 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+    <meta http-equiv="Pragma" content="no-cache">
+    <meta http-equiv="Expires" content="0">
+    <link rel="icon" href="data:,">
     <title>CanteenPay | Parent Pocket Money Top-Up</title>
     <style>
         body { font-family: system-ui, sans-serif; background: #f4f6f8; margin: 0; padding: 20px; }
@@ -20,12 +24,14 @@
         .alert.info { background: #eff6ff; color: #1e40af; border: 1px solid #60a5fa; }
         .alert.ok { background: #d1fae5; color: #065f46; border: 1px solid #10b981; }
         .alert.err { background: #fef2f2; color: #991b1b; border: 1px solid #f87171; }
+        .auth-link { display: inline-block; padding: 11px 16px; background: #059669; color: #ffffff !important; border-radius: 6px; text-decoration: none; font-weight: 700; margin-right: 8px; margin-bottom: 8px; }
+        .verify-btn { width: auto; margin-top: 0; padding: 11px 16px; background: #111827; color: #ffffff; border: none; border-radius: 6px; font-weight: 700; font-size: 0.92rem; cursor: pointer; }
     </style>
 </head>
 <body>
 <div class="card">
     <h2>Send Student Pocket Money</h2>
-    <p style="color:#6b7280; font-size:0.9rem;">Top up your child's school canteen wallet instantly via MTN MoMo.</p>
+    <p style="color:#6b7280; font-size:0.9rem;">Top up your child's school canteen wallet instantly via MTN MoMo or Airtel Money.</p>
 
     <label for="regNo">Student Registration ID</label>
     <input type="text" id="regNo" placeholder="e.g. STD-2026-001" onblur="verifyStudent()">
@@ -37,7 +43,7 @@
     <label for="phone">Your Mobile Money Number (MTN or Airtel)</label>
     <input type="tel" id="phone" placeholder="e.g. 0772123456 or 0752123456" oninput="updateNetworkStyle()">
 
-    <button id="payBtn" onclick="submitTopUp()">Send via Mobile Money (+UGX 500 Fee)</button>
+    <button id="payBtn" type="button" onclick="submitTopUp()">Send via Mobile Money (+UGX 500 Fee)</button>
     <div id="statusBox" class="status-box"></div>
 </div>
 
@@ -45,6 +51,7 @@
 let currentFlwAuthUrl = null;
 let currentReferenceId = null;
 let verifyPollTimer = null;
+
 async function verifyStudent() {
     const regNo = document.getElementById("regNo").value.trim();
     const badge = document.getElementById("studentBadge");
@@ -53,7 +60,7 @@ async function verifyStudent() {
         return;
     }
     try {
-        const res = await fetch(`/api/student/lookup/?reg_no=${encodeURIComponent(regNo)}`);
+        const res = await fetch(`/api/student/lookup/?reg_no=${encodeURIComponent(regNo)}&_t=${Date.now()}`);
         const data = await res.json();
         badge.style.display = "block";
         if (res.ok) {
@@ -75,6 +82,7 @@ function updateNetworkStyle() {
     const btn = document.getElementById("payBtn");
     if (/^(0|256|\+256)?(70|75|74)/.test(phone)) {
         btn.style.background = "#e11d48";
+        btn.style.color = "#ffffff";
         btn.innerText = "Send via Airtel Money (+UGX 500 Fee)";
     } else if (/^(0|256|\+256)?(77|78|76|39)/.test(phone)) {
         btn.style.background = "#f59e0b";
@@ -101,6 +109,7 @@ async function submitTopUp() {
         return;
     }
 
+    if (verifyPollTimer) clearInterval(verifyPollTimer);
     btn.disabled = true;
     btn.innerText = "Sending prompt...";
     alertBox.style.display = "none";
@@ -122,12 +131,42 @@ async function submitTopUp() {
             currentFlwAuthUrl = data.redirect_url || null;
             currentReferenceId = data.reference_id || null;
             alertBox.className = "alert info";
-            let html = `${data.message}<br><br>`;
-                if (data.redirect_url) {
-                    html += `<button type="button" onclick="openFlwAuth()" style="display:inline-block; padding:10px 14px; background:#059669; color:#fff; border:none; border-radius:6px; font-weight:bold; margin-right:8px; margin-bottom:6px; cursor:pointer;">1. Authorize OTP &rarr;</button>`;
+            alertBox.innerHTML = "";
+
+            const msgSpan = document.createElement("div");
+            msgSpan.style.marginBottom = "12px";
+            msgSpan.innerText = data.message;
+            alertBox.appendChild(msgSpan);
+
+            if (data.redirect_url) {
+                const authBtn = document.createElement("button");
+                authBtn.type = "button";
+                authBtn.className = "auth-link";
+                authBtn.innerText = "1. Authorize OTP →";
+                authBtn.onclick = openFlwAuth;
+                alertBox.appendChild(authBtn);
+            } else {
+                const debugDiv = document.createElement("div");
+                debugDiv.style.fontSize = "0.8rem";
+                debugDiv.style.color = "#991b1b";
+                debugDiv.style.marginBottom = "8px";
+                debugDiv.innerText = "Debug response: " + JSON.stringify(data);
+                alertBox.appendChild(debugDiv);
+            }
+
+            const verifyBtn = document.createElement("button");
+            verifyBtn.type = "button";
+            verifyBtn.className = "verify-btn";
+            verifyBtn.innerText = "2. Verify & Credit Wallet";
+            verifyBtn.onclick = () => verifyTopUp(currentReferenceId, false);
+            alertBox.appendChild(verifyBtn);
+
+            // Auto-check Flutterwave every 4 seconds so the parent gets hands-free confirmation
+            verifyPollTimer = setInterval(() => {
+                if (currentReferenceId) {
+                    verifyTopUp(currentReferenceId, true);
                 }
-            html += `<button type="button" onclick="verifyTopUp('${data.reference_id}')" style="padding:10px 14px; background:#111827; color:#fff; border:none; border-radius:6px; font-weight:bold; cursor:pointer;">2. Verify &amp; Credit Wallet</button>`;
-            alertBox.innerHTML = html;
+            }, 4000);
         } else {
             alertBox.className = "alert err";
             alertBox.innerText = data.error || "Failed to initiate payment.";
@@ -142,11 +181,13 @@ async function submitTopUp() {
     }
 }
 
-async function verifyTopUp(refId, polling = false) {
+async function verifyTopUp(refId, isSilent) {
     const alertBox = document.getElementById("statusBox");
-    alertBox.style.display = "block";
-    alertBox.className = "alert info";
-    alertBox.innerText = "Verifying payment with Flutterwave...";
+    if (!isSilent) {
+        alertBox.style.display = "block";
+        alertBox.className = "alert info";
+        alertBox.innerText = "Verifying payment with Flutterwave...";
+    }
 
     try {
         const res = await fetch("/api/parent/topup/verify/", {
@@ -157,18 +198,18 @@ async function verifyTopUp(refId, polling = false) {
         const data = await res.json();
 
         if (data.status === "SUCCESSFUL") {
-            if (polling && verifyPollTimer) {
-                clearInterval(verifyPollTimer);
-                verifyPollTimer = null;
-            }
+            if (verifyPollTimer) clearInterval(verifyPollTimer);
+            alertBox.style.display = "block";
             alertBox.className = "alert ok";
-            alertBox.innerText = `${data.message} (New Balance: UGX ${Number(data.new_balance).toLocaleString()})`;
-        } else {
+            alertBox.innerText = `✓ ${data.message} (New Balance: UGX ${Number(data.new_balance).toLocaleString()})`;
+        } else if (!isSilent) {
+            alertBox.style.display = "block";
             alertBox.className = "alert info";
             alertBox.innerText = data.message || data.error;
         }
     } catch (err) {
-        if (!polling) {
+        if (!isSilent) {
+            alertBox.style.display = "block";
             alertBox.className = "alert err";
             alertBox.innerText = "Verification error: " + err.message;
         }
@@ -184,13 +225,6 @@ function openFlwAuth() {
     if (!win) {
         window.location.href = currentFlwAuthUrl;
     }
-    // Automatically check Flutterwave every 4 seconds so the parent sees green confirmation hands-free
-    if (verifyPollTimer) clearInterval(verifyPollTimer);
-    verifyPollTimer = setInterval(() => {
-        if (currentReferenceId) {
-            verifyTopUp(currentReferenceId, true);
-        }
-    }, 4000);
 }
 </script>
 </body>

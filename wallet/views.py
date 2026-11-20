@@ -9,6 +9,7 @@ from django.db.models import Sum, Count
 from django.http import JsonResponse
 from django.shortcuts import render
 from django.utils import timezone
+from django.views.decorators.cache import never_cache
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_POST, require_GET
 from .models import School, Student, WalletTopUp, CanteenOrder
@@ -399,10 +400,12 @@ def check_student_balance(request):
         return JsonResponse({"error": str(e)}, status=500)
 
 
+@never_cache
 def parent_topup_page(request):
     return render(request, "wallet/parent_topup.html")
 
 
+@never_cache
 @login_required(login_url="/admin/login/")
 def canteen_pos_page(request):
     return render(request, "wallet/canteen_pos.html")

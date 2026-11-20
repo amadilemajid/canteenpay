@@ -42,6 +42,9 @@
 </div>
 
 <script>
+let currentFlwAuthUrl = null;
+let currentReferenceId = null;
+let verifyPollTimer = null;
 async function verifyStudent() {
     const regNo = document.getElementById("regNo").value.trim();
     const badge = document.getElementById("studentBadge");
@@ -116,10 +119,12 @@ async function submitTopUp() {
         alertBox.style.display = "block";
 
         if (res.ok) {
+            currentFlwAuthUrl = data.redirect_url || null;
+            currentReferenceId = data.reference_id || null;
             alertBox.className = "alert info";
             let html = `${data.message}<br><br>`;
                 if (data.redirect_url) {
-                    html += `<button type="button" onclick="openFlwAuth('${data.redirect_url}')" style="display:inline-block; padding:10px 14px; background:#059669; color:#fff; border:none; border-radius:6px; font-weight:bold; margin-right:8px; margin-bottom:6px; cursor:pointer;">1. Authorize OTP &rarr;</button>`;
+                    html += `<button type="button" onclick="openFlwAuth()" style="display:inline-block; padding:10px 14px; background:#059669; color:#fff; border:none; border-radius:6px; font-weight:bold; margin-right:8px; margin-bottom:6px; cursor:pointer;">1. Authorize OTP &rarr;</button>`;
                 }
             html += `<button type="button" onclick="verifyTopUp('${data.reference_id}')" style="padding:10px 14px; background:#111827; color:#fff; border:none; border-radius:6px; font-weight:bold; cursor:pointer;">2. Verify &amp; Credit Wallet</button>`;
             alertBox.innerHTML = html;
@@ -137,7 +142,7 @@ async function submitTopUp() {
     }
 }
 
-async function verifyTopUp(refId) {
+async function verifyTopUp(refId, polling = false) {
     const alertBox = document.getElementById("statusBox");
     alertBox.style.display = "block";
     alertBox.className = "alert info";
@@ -152,6 +157,10 @@ async function verifyTopUp(refId) {
         const data = await res.json();
 
         if (data.status === "SUCCESSFUL") {
+            if (polling && verifyPollTimer) {
+                clearInterval(verifyPollTimer);
+                verifyPollTimer = null;
+            }
             alertBox.className = "alert ok";
             alertBox.innerText = `${data.message} (New Balance: UGX ${Number(data.new_balance).toLocaleString()})`;
         } else {
@@ -159,20 +168,29 @@ async function verifyTopUp(refId) {
             alertBox.innerText = data.message || data.error;
         }
     } catch (err) {
-        alertBox.className = "alert err";
-        alertBox.innerText = "Verification error: " + err.message;
+        if (!polling) {
+            alertBox.className = "alert err";
+            alertBox.innerText = "Verification error: " + err.message;
+        }
     }
 }
 
-function openFlwAuth(url) {
-    if (!url || url === "undefined" || url === "null") {
+function openFlwAuth() {
+    if (!currentFlwAuthUrl || currentFlwAuthUrl === "undefined" || currentFlwAuthUrl === "null") {
         alert("Missing Flutterwave authorization URL from server.");
         return;
     }
-    const win = window.open(url, "_blank");
+    const win = window.open(currentFlwAuthUrl, "_blank");
     if (!win) {
-        window.location.href = url;
+        window.location.href = currentFlwAuthUrl;
     }
+    // Automatically check Flutterwave every 4 seconds so the parent sees green confirmation hands-free
+    if (verifyPollTimer) clearInterval(verifyPollTimer);
+    verifyPollTimer = setInterval(() => {
+        if (currentReferenceId) {
+            verifyTopUp(currentReferenceId, true);
+        }
+    }, 4000);
 }
 </script>
 </body>

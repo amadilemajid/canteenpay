@@ -118,9 +118,9 @@ async function submitTopUp() {
         if (res.ok) {
             alertBox.className = "alert info";
             let html = `${data.message}<br><br>`;
-            if (data.redirect_url) {
-                html += `<a href="${data.redirect_url}" target="_blank" rel="noopener noreferrer" style="display:inline-block; padding:10px 14px; background:#059669; color:#fff; border-radius:6px; text-decoration:none; font-weight:bold; margin-right:8px; margin-bottom:6px;">1. Authorize OTP &rarr;</a>`;
-            }
+                if (data.redirect_url) {
+                    html += `<button type="button" onclick="openFlwAuth('${data.redirect_url}')" style="display:inline-block; padding:10px 14px; background:#059669; color:#fff; border:none; border-radius:6px; font-weight:bold; margin-right:8px; margin-bottom:6px; cursor:pointer;">1. Authorize OTP &rarr;</button>`;
+                }
             html += `<button type="button" onclick="verifyTopUp('${data.reference_id}')" style="padding:10px 14px; background:#111827; color:#fff; border:none; border-radius:6px; font-weight:bold; cursor:pointer;">2. Verify &amp; Credit Wallet</button>`;
             alertBox.innerHTML = html;
         } else {
@@ -161,6 +161,17 @@ async function verifyTopUp(refId) {
     } catch (err) {
         alertBox.className = "alert err";
         alertBox.innerText = "Verification error: " + err.message;
+    }
+}
+
+function openFlwAuth(url) {
+    if (!url || url === "undefined" || url === "null") {
+        alert("Missing Flutterwave authorization URL from server.");
+        return;
+    }
+    const win = window.open(url, "_blank");
+    if (!win) {
+        window.location.href = url;
     }
 }
 </script>

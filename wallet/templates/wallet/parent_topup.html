@@ -19,6 +19,7 @@
         .alert { margin-top: 16px; padding: 12px; border-radius: 8px; font-size: 0.92rem; display: none; }
         .alert.info { background: #eff6ff; color: #1e40af; border: 1px solid #60a5fa; }
         .alert.ok { background: #d1fae5; color: #065f46; border: 1px solid #10b981; }
+        .alert.err { background: #fef2f2; color: #991b1b; border: 1px solid #f87171; }
     </style>
 </head>
 <body>
@@ -34,92 +35,122 @@
     <input type="number" id="amount" placeholder="e.g. 20000" min="1000" step="500">
 
     <label for="phone">Your Mobile Money Number (MTN or Airtel)</label>
-    <input type="tel" id="phone" placeholder="e.g. 0772123456 or 0752123456" oninput="detectNetwork()">
+    <input type="tel" id="phone" placeholder="e.g. 0772123456 or 0752123456" oninput="updateNetworkStyle()">
 
     <button id="payBtn" onclick="submitTopUp()">Send via Mobile Money (+UGX 500 Fee)</button>
     <div id="statusBox" class="status-box"></div>
 </div>
 
 <script>
-    async function verifyStudent() {
-        const regNo = document.getElementById("regNo").value.trim();
-        const badge = document.getElementById("studentBadge");
-        if (!regNo) return;
-
+async function verifyStudent() {
+    const regNo = document.getElementById("regNo").value.trim();
+    const badge = document.getElementById("studentBadge");
+    if (!regNo) {
+        badge.style.display = "none";
+        return;
+    }
+    try {
         const res = await fetch(`/api/student/lookup/?reg_no=${encodeURIComponent(regNo)}`);
         const data = await res.json();
+        badge.style.display = "block";
+        if (res.ok) {
+            badge.style.background = "#ecfdf5";
+            badge.style.color = "#065f46";
+            badge.innerText = `✓ ${data.full_name} — ${data.school}`;
+        } else {
+            badge.style.background = "#fef2f2";
+            badge.style.color = "#991b1b";
+            badge.innerText = `✗ ${data.error || "Student ID not found"}`;
+        }
+    } catch (err) {
+        badge.style.display = "none";
+    }
+}
+
+function updateNetworkStyle() {
+    const phone = document.getElementById("phone").value.replace(/\s+/g, "");
+    const btn = document.getElementById("payBtn");
+    if (/^(0|256|\+256)?(70|75|74)/.test(phone)) {
+        btn.style.background = "#e11d48";
+        btn.innerText = "Send via Airtel Money (+UGX 500 Fee)";
+    } else if (/^(0|256|\+256)?(77|78|76|39)/.test(phone)) {
+        btn.style.background = "#f59e0b";
+        btn.style.color = "#111827";
+        btn.innerText = "Send via MTN MoMo (+UGX 500 Fee)";
+    } else {
+        btn.style.background = "#059669";
+        btn.style.color = "#ffffff";
+        btn.innerText = "Send via Mobile Money (+UGX 500 Fee)";
+    }
+}
+
+async function submitTopUp() {
+    const regNo = document.getElementById("regNo").value.trim();
+    const amount = document.getElementById("amount").value.trim();
+    const phone = document.getElementById("phone").value.trim();
+    const alertBox = document.getElementById("statusBox");
+    const btn = document.getElementById("payBtn");
+
+    if (!regNo || !amount || !phone) {
+        alertBox.style.display = "block";
+        alertBox.className = "alert err";
+        alertBox.innerText = "Please fill in all fields.";
+        return;
+    }
+
+    btn.disabled = true;
+    btn.innerText = "Sending prompt...";
+    alertBox.style.display = "none";
+
+    try {
+        const res = await fetch("/api/parent/topup/", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+                student_reg_no: regNo,
+                amount: amount,
+                payer_phone: phone
+            })
+        });
+        const data = await res.json();
+        alertBox.style.display = "block";
 
         if (res.ok) {
-            badge.style.display = "block";
-            badge.style.background = "#ecfdf5";
-            badge.style.borderColor = "#10b981";
-            badge.style.color = "#065f46";
-            badge.innerHTML = `<strong>Student:</strong> ${data.full_name}<br><strong>School:</strong> ${data.school}`;
+            alertBox.className = "alert info";
+            let html = `${data.message}<br><br>`;
+            if (data.redirect_url) {
+                html += `<a href="${data.redirect_url}" target="_blank" style="display:inline-block; padding:10px 14px; background:#059669; color:#fff; border-radius:6px; text-decoration:none; font-weight:bold; margin-right:8px; margin-bottom:6px;">1. Authorize OTP &rarr;</a>`;
+            }
+            html += `<button type="button" onclick="verifyTopUp('${data.reference_id}')" style="padding:10px 14px; background:#111827; color:#fff; border:none; border-radius:6px; font-weight:bold; cursor:pointer;">2. Verify &amp; Credit Wallet</button>`;
+            alertBox.innerHTML = html;
         } else {
-            badge.style.display = "block";
-            badge.style.background = "#fef2f2";
-            badge.style.borderColor = "#f87171";
-            badge.style.color = "#991b1b";
-            badge.innerText = data.error;
+            alertBox.className = "alert err";
+            alertBox.innerText = data.error || "Failed to initiate payment.";
         }
+    } catch (err) {
+        alertBox.style.display = "block";
+        alertBox.className = "alert err";
+        alertBox.innerText = "Network error: " + err.message;
+    } finally {
+        btn.disabled = false;
+        updateNetworkStyle();
     }
+}
 
-    async function submitTopUp() {
-        const btn = document.getElementById("payBtn");
-        const statusBox = document.getElementById("statusBox");
-        const payload = {
-            student_reg_no: document.getElementById("regNo").value.trim(),
-            amount: document.getElementById("amount").value,
-            payer_phone: document.getElementById("phone").value.trim()
-        };
+async function verifyTopUp(refId) {
+    const alertBox = document.getElementById("statusBox");
+    alertBox.style.display = "block";
+    alertBox.className = "alert info";
+    alertBox.innerText = "Verifying payment with Flutterwave...";
 
-        btn.disabled = true;
-        btn.innerText = "Sending MoMo Prompt...";
-        statusBox.style.display = "none";
-
-        try {
-            const res = await fetch("/api/parent/topup/", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify(payload)
-            });
-            const data = await res.json();
-
-            statusBox.style.display = "block";
-            if (res.ok) {
-                statusBox.className = "alert info";
-                let html = `${data.message}<br><br>`;
-                if (data.redirect_url) {
-                    html += `<a href="${data.redirect_url}" target="_blank" style="display:inline-block; padding:10px 14px; background:#059669; color:#fff; border-radius:6px; text-decoration:none; font-weight:bold; margin-right:8px;">1. Authorize OTP &rarr;</a>`;
-                }
-                html += `<button type="button" onclick="verifyTopUp('${data.reference_id}')" style="padding:10px 14px; background:#111827; color:#fff; border:none; border-radius:6px; font-weight:bold; cursor:pointer;">2. Verify &amp; Credit Wallet</button>`;
-                statusBox.innerHTML = html;
-            } else {
-                statusBox.className = "status-box error";
-                statusBox.innerText = data.error || "Payment failed.";
-            }
-                statusBox.className = "status-box error";
-                statusBox.innerText = data.error || "Payment failed.";
-            }
-        } catch (err) {
-            statusBox.style.display = "block";
-            statusBox.className = "status-box error";
-            statusBox.innerText = "Network error. Please check your connection.";
-        } finally {
-            btn.disabled = false;
-            detectNetwork();
-        }
-    }
-
-    async function verifyTopUp(refId) {
-        const alertBox = document.getElementById("statusBox");
+    try {
         const res = await fetch("/api/parent/topup/verify/", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ reference_id: refId })
         });
         const data = await res.json();
-        alertBox.style.display = "block";
+
         if (data.status === "SUCCESSFUL") {
             alertBox.className = "alert ok";
             alertBox.innerText = `${data.message} (New Balance: UGX ${Number(data.new_balance).toLocaleString()})`;
@@ -127,26 +158,11 @@
             alertBox.className = "alert info";
             alertBox.innerText = data.message || data.error;
         }
+    } catch (err) {
+        alertBox.className = "alert err";
+        alertBox.innerText = "Verification error: " + err.message;
     }
-
-    function detectNetwork() {
-        const raw = document.getElementById("phone").value.trim().replace(/\s+/g, "").replace(/^\+?256/, "0");
-        const btn = document.getElementById("payBtn");
-
-        if (/^0(70|75|74)/.test(raw)) {
-            btn.innerText = "Send via Airtel Money (+UGX 500 Fee)";
-            btn.style.background = "#e11d48"; // Airtel Red
-            btn.style.color = "#ffffff";
-        } else if (/^0(77|78|76)/.test(raw)) {
-            btn.innerText = "Send via MTN MoMo (+UGX 500 Fee)";
-            btn.style.background = "#ffcc00"; // MTN Yellow
-            btn.style.color = "#000000";
-        } else {
-            btn.innerText = "Send via Mobile Money (+UGX 500 Fee)";
-            btn.style.background = "#111827";
-            btn.style.color = "#ffffff";
-        }
-    }
+}
 </script>
 </body>
 </html>

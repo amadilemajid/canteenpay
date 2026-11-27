@@ -17,6 +17,7 @@
         .cash-form { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; align-items: end; }
         .cash-form label { display: block; font-size: 0.85rem; font-weight: 600; margin-bottom: 4px; color: #374151; }
         .cash-form input { width: 100%; padding: 9px 10px; border: 1px solid #d1d5db; border-radius: 6px; box-sizing: border-box; font-size: 0.95rem; }
+        .lookup-badge { margin-top: 8px; padding: 8px 10px; border-radius: 6px; font-size: 0.88rem; font-weight: 600; display: none; }
         .msg { padding: 12px 14px; border-radius: 6px; margin-top: 14px; font-size: 0.92rem; font-weight: 600; }
         .msg-success { background: #d1fae5; color: #065f46; border: 1px solid #10b981; }
         .msg-error { background: #fef2f2; color: #991b1b; border: 1px solid #f87171; }
@@ -92,7 +93,7 @@
             <input type="hidden" name="report_date" value="{{ report_date|date:'Y-m-d' }}">
             <div>
                 <label for="cashRegNo">CanteenPay Code</label>
-                <input type="text" id="cashRegNo" name="student_reg_no" placeholder="e.g. YMB-0042" required>
+                <input type="text" id="cashRegNo" name="student_reg_no" placeholder="e.g. YMB-0042" onblur="lookupCashStudent()" required>
             </div>
             <div>
                 <label for="cashAmount">Cash Amount (UGX)</label>
@@ -106,6 +107,7 @@
                 <button type="submit" class="btn" style="width:100%; background:#065f46; padding:10px;">Record Cash Top-Up</button>
             </div>
         </form>
+        <div id="cashStudentBadge" class="lookup-badge"></div>
     </div>
 
     {% if recent_cash_topups %}
@@ -138,5 +140,34 @@
     </table>
     {% endif %}
 </div>
+<script>
+async function lookupCashStudent() {
+    const regNo = document.getElementById("cashRegNo").value.trim();
+    const badge = document.getElementById("cashStudentBadge");
+    if (!regNo) {
+        badge.style.display = "none";
+        return;
+    }
+    try {
+        const res = await fetch(`/api/student/lookup/?reg_no=${encodeURIComponent(regNo)}`);
+        const data = await res.json();
+        badge.style.display = "block";
+        if (res.ok) {
+            const classPart = data.class_stream ? ` — ${data.class_stream}` : "";
+            badge.style.background = "#ecfdf5";
+            badge.style.color = "#065f46";
+            badge.style.border = "1px solid #10b981";
+            badge.textContent = `✓ ${data.full_name}${classPart} (${data.school})`;
+        } else {
+            badge.style.background = "#fef2f2";
+            badge.style.color = "#991b1b";
+            badge.style.border = "1px solid #f87171";
+            badge.textContent = `✗ ${data.error || "Student ID not found."}`;
+        }
+    } catch (err) {
+        badge.style.display = "none";
+    }
+}
+</script>
 </body>
 </html>

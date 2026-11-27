@@ -11,8 +11,6 @@ from wallet.views import (
     pos_student_search,
     initiate_parent_topup,
     canteen_checkout,
-    momo_callback_webhook,
-    airtel_callback_webhook,
     aggregator_callback_webhook,
     verify_parent_topup,
     check_student_balance,
@@ -34,8 +32,6 @@ urlpatterns = [
     path("api/parent/topup/", initiate_parent_topup, name="initiate_parent_topup"),
     path("api/canteen/checkout/", canteen_checkout, name="canteen_checkout"),
     path("api/student/balance/", check_student_balance, name="check_student_balance"),
-    path("api/momo/callback/", momo_callback_webhook, name="momo_callback"),
-    path("api/airtel/callback/", airtel_callback_webhook, name="airtel_callback"),
     path("api/aggregator/callback/", aggregator_callback_webhook, name="aggregator_callback"),
     path("api/parent/topup/verify/", verify_parent_topup, name="verify_parent_topup"),
 ]

@@ -1,10 +1,15 @@
+import logging
+from datetime import timedelta
 from decimal import Decimal, InvalidOperation
 import requests
 from django.conf import settings
 from django.db import transaction
+from django.utils import timezone
 
 from .models import Student, WalletTopUp
 from .sms_service import send_topup_receipt_sms
+
+logger = logging.getLogger(__name__)
 
 
 def initiate_ug_mobile_money_split(
@@ -142,3 +147,51 @@ def verify_and_credit_flw_topup(reference_id):
             return "FAILED", topup, topup.student
 
         return "PENDING", topup, topup.student
+
+
+def reconcile_pending_topups(max_batch=None):
+    """
+    Checks PENDING top-ups older than 2 minutes against Flutterwave, credits
+    verified ones, and marks unpaid ones older than 15 minutes as FAILED.
+    Errors per record are logged and skipped so page loads never crash.
+    """
+    now = timezone.now()
+    two_minutes_ago = now - timedelta(minutes=2)
+    fifteen_minutes_ago = now - timedelta(minutes=15)
+
+    qs = WalletTopUp.objects.filter(
+        status="PENDING", created_at__lte=two_minutes_ago
+    ).order_by("created_at")
+    if max_batch is not None:
+        qs = qs[:max_batch]
+
+    pending_refs = list(qs.values_list("momo_reference_id", flat=True))
+    credited_count = 0
+    failed_count = 0
+    still_pending_count = 0
+
+    for ref_id in pending_refs:
+        try:
+            outcome, topup, _ = verify_and_credit_flw_topup(ref_id)
+            if outcome == "CREDITED":
+                credited_count += 1
+            elif outcome == "FAILED":
+                failed_count += 1
+            elif outcome == "PENDING" and topup.created_at <= fifteen_minutes_ago:
+                with transaction.atomic():
+                    locked = WalletTopUp.objects.select_for_update().get(pk=topup.pk)
+                    if locked.status == "PENDING":
+                        locked.status = "FAILED"
+                        locked.save(update_fields=["status"])
+                        failed_count += 1
+            elif outcome == "PENDING":
+                still_pending_count += 1
+        except Exception:
+            logger.exception("Error reconciling pending top-up %s", ref_id)
+
+    return {
+        "checked": len(pending_refs),
+        "credited": credited_count,
+        "failed": failed_count,
+        "still_pending": still_pending_count,
+    }

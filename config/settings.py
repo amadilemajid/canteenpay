@@ -11,6 +11,7 @@ https://docs.djangoproject.com/en/6.0/ref/settings/
 """
 
 import os
+import sys
 from pathlib import Path
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
@@ -166,3 +167,36 @@ FLW_SECRET_KEY = os.environ.get(
     "FLW_SECRET_KEY", "FLWSECK_TEST-YOUR-SECRET-KEY-HERE"
 )  # Replace with live key in production
 FLW_WEBHOOK_HASH = os.environ.get("FLW_WEBHOOK_HASH", "YOUR_SECRET_WEBHOOK_HASH")
+
+# HTTPS cookie & proxy hardening in production (skipped during manage.py test HTTP client runs)
+if not DEBUG and not (len(sys.argv) > 1 and sys.argv[1] == "test"):
+    SESSION_COOKIE_SECURE = True
+    CSRF_COOKIE_SECURE = True
+    SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
+
+LOGGING = {
+    "version": 1,
+    "disable_existing_loggers": False,
+    "formatters": {
+        "standard": {
+            "format": "[%(asctime)s] %(levelname)s %(name)s: %(message)s",
+        },
+    },
+    "handlers": {
+        "console": {
+            "class": "logging.StreamHandler",
+            "formatter": "standard",
+        },
+    },
+    "root": {
+        "handlers": ["console"],
+        "level": "WARNING",
+    },
+    "loggers": {
+        "wallet": {
+            "handlers": ["console"],
+            "level": "INFO",
+            "propagate": False,
+        },
+    },
+}

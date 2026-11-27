@@ -24,6 +24,7 @@ from django.views.decorators.http import require_GET, require_POST
 
 from .aggregator_service import (
     initiate_ug_mobile_money_split,
+    reconcile_pending_topups,
     verify_and_credit_flw_topup,
 )
 from .models import (
@@ -36,7 +37,6 @@ from .models import (
 )
 from .sms_service import (
     send_pin_lockout_alert_sms,
-    send_topup_receipt_sms,
 )
 
 logger = logging.getLogger(__name__)
@@ -214,7 +214,7 @@ def canteen_checkout(request):
                     status=400,
                 )
 
-            today = timezone.now().date()
+            today = timezone.localdate()
             spent_today = _student_net_spent_today(student, today)
             if (spent_today + amount) > student.school.daily_spend_limit:
                 remaining = student.school.daily_spend_limit - spent_today
@@ -262,55 +262,10 @@ def canteen_checkout(request):
 @csrf_exempt
 @require_POST
 def momo_callback_webhook(request):
-    """
-    Legacy MTN MoMo callback endpoint retained for existing callback tests.
-    """
-    payload = _parse_json_body(request)
-    if payload is None:
-        return JsonResponse({"error": "Invalid JSON payload"}, status=400)
+    # Legacy endpoint removed — routes /api/momo/callback/ and /api/airtel/callback/
+    # are no longer registered in config/urls.py.
+    return JsonResponse({"error": "Endpoint removed."}, status=410)
 
-    reference_id = payload.get("externalId") or payload.get("referenceId")
-    momo_status = payload.get("status")
-
-    try:
-        with transaction.atomic():
-            topup = WalletTopUp.objects.select_for_update().get(
-                momo_reference_id=reference_id
-            )
-
-            if topup.status != "PENDING":
-                return JsonResponse({"message": "Already processed"}, status=200)
-
-            if momo_status == "SUCCESSFUL":
-                topup.status = "SUCCESSFUL"
-                topup.save(update_fields=["status"])
-
-                student = Student.objects.select_for_update().get(id=topup.student_id)
-                student.wallet_balance += topup.amount
-                student.save(update_fields=["wallet_balance"])
-
-                short_ref = str(topup.momo_reference_id)[:8].upper()
-                parent_phone = student.parent_phone
-                student_name = student.full_name
-                amount_str = str(topup.amount)
-                new_balance_str = str(student.wallet_balance)
-                transaction.on_commit(
-                    lambda: send_topup_receipt_sms(
-                        parent_phone=parent_phone,
-                        student_name=student_name,
-                        amount_credited=amount_str,
-                        new_balance=new_balance_str,
-                        tx_ref=short_ref,
-                    )
-                )
-            else:
-                topup.status = "FAILED"
-                topup.save(update_fields=["status"])
-
-        return JsonResponse({"message": "Callback processed"}, status=200)
-
-    except (WalletTopUp.DoesNotExist, ValidationError, ValueError):
-        return JsonResponse({"error": "TopUp reference not found"}, status=404)
 
 
 @require_POST
@@ -530,7 +485,7 @@ def check_student_balance(request):
             if pin_error is not None:
                 return pin_error
 
-            today = timezone.now().date()
+            today = timezone.localdate()
             spent_today = _student_net_spent_today(student, today)
             remaining_daily = max(
                 student.school.daily_spend_limit - spent_today, Decimal("0.00")
@@ -668,56 +623,9 @@ def lookup_student(request):
 @csrf_exempt
 @require_POST
 def airtel_callback_webhook(request):
-    """
-    Callback endpoint hit by Airtel Money when a parent completes or cancels a top-up.
-    """
-    payload = _parse_json_body(request)
-    if payload is None:
-        return JsonResponse({"error": "Invalid JSON payload"}, status=400)
-
-    transaction_data = payload.get("transaction", {})
-    reference_id = transaction_data.get("id")
-    airtel_status = transaction_data.get("status")
-
-    try:
-        with transaction.atomic():
-            topup = WalletTopUp.objects.select_for_update().get(
-                momo_reference_id=reference_id
-            )
-
-            if topup.status != "PENDING":
-                return JsonResponse({"message": "Already processed"}, status=200)
-
-            if airtel_status == "TS":
-                topup.status = "SUCCESSFUL"
-                topup.save(update_fields=["status"])
-
-                student = Student.objects.select_for_update().get(id=topup.student_id)
-                student.wallet_balance += topup.amount
-                student.save(update_fields=["wallet_balance"])
-
-                short_ref = str(topup.momo_reference_id)[:8].upper()
-                parent_phone = student.parent_phone
-                student_name = student.full_name
-                amount_str = str(topup.amount)
-                new_balance_str = str(student.wallet_balance)
-                transaction.on_commit(
-                    lambda: send_topup_receipt_sms(
-                        parent_phone=parent_phone,
-                        student_name=student_name,
-                        amount_credited=amount_str,
-                        new_balance=new_balance_str,
-                        tx_ref=short_ref,
-                    )
-                )
-            else:
-                topup.status = "FAILED"
-                topup.save(update_fields=["status"])
-
-        return JsonResponse({"message": "Callback processed"}, status=200)
-
-    except (WalletTopUp.DoesNotExist, ValidationError, ValueError):
-        return JsonResponse({"error": "TopUp reference not found"}, status=404)
+    # Legacy endpoint removed — route /api/airtel/callback/ is no longer
+    # registered in config/urls.py.
+    return JsonResponse({"error": "Endpoint removed."}, status=410)
 
 
 @staff_member_required(login_url="/admin/login/")
@@ -725,7 +633,15 @@ def bursar_daily_report(request):
     """
     Displays today's online top-ups, bursar desk cash top-ups, and canteen sales,
     and processes audited physical cash-in deposits from the bursar desk.
+    Runs a lightweight reconciliation pass on PENDING top-ups each time the
+    page loads (safe on PythonAnywhere free tier — max 10 records per pass).
     """
+    # Inline reconciliation — credit any verified PENDING top-ups
+    try:
+        reconcile_pending_topups(max_batch=10)
+    except Exception:
+        logger.warning("Inline reconcile failed on bursar_daily_report load", exc_info=True)
+
     selected_date_str = request.GET.get("date") or request.POST.get("report_date")
     if selected_date_str:
         try:
@@ -733,9 +649,9 @@ def bursar_daily_report(request):
                 selected_date_str, "%Y-%m-%d"
             ).date()
         except ValueError:
-            report_date = timezone.now().date()
+            report_date = timezone.localdate()
     else:
-        report_date = timezone.now().date()
+        report_date = timezone.localdate()
 
     if request.method == "POST":
         reg_no = (request.POST.get("student_reg_no") or "").strip()
@@ -845,18 +761,33 @@ def bursar_daily_report(request):
 def daily_topup_noticeboard(request):
     """
     Generates a privacy-safe morning noticeboard list of students whose
-    parents topped up their wallets on the selected date (hides exact UGX amounts).
+    parents topped up their wallets (online or bursar cash) on the selected date.
+    Runs a lightweight reconciliation pass each time the page loads so PENDING
+    top-ups get credited automatically even on PythonAnywhere free tier.
     """
+    # Inline reconciliation — credit any verified PENDING top-ups
+    try:
+        reconcile_pending_topups(max_batch=10)
+    except Exception:
+        logger.warning("Inline reconcile failed on noticeboard load", exc_info=True)
+
     selected_date_str = request.GET.get("date")
     if selected_date_str:
         report_date = timezone.datetime.strptime(selected_date_str, "%Y-%m-%d").date()
     else:
-        report_date = timezone.now().date()
+        report_date = timezone.localdate()
+
+    online_student_ids = WalletTopUp.objects.filter(
+        status="SUCCESSFUL", created_at__date=report_date
+    ).values_list("student_id", flat=True)
+
+    cash_student_ids = BursarCashTopUp.objects.filter(
+        created_at__date=report_date
+    ).values_list("student_id", flat=True)
 
     credited_students = (
         Student.objects.filter(
-            topups__status="SUCCESSFUL",
-            topups__created_at__date=report_date,
+            Q(id__in=online_student_ids) | Q(id__in=cash_student_ids),
             is_active=True,
         )
         .select_related("school")

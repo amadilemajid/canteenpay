@@ -85,8 +85,16 @@ class CanteenPayProductionTests(TestCase):
         res = self.client.get("/pos/")
         self.assertEqual(res.status_code, 302)  # Redirects to login
 
-    @patch("wallet.views.send_topup_receipt_sms")
-    def test_8_duplicate_webhook_idempotency(self, _mock_sms):
+    @patch("wallet.aggregator_service.send_topup_receipt_sms")
+    @patch("wallet.aggregator_service.verify_flw_transaction_by_ref")
+    def test_8_duplicate_webhook_idempotency(self, mock_verify, _mock_sms):
+        """
+        Verifies that crediting is idempotent: calling verify_and_credit_flw_topup
+        twice only credits the student once (the legacy /api/momo/callback/ route
+        has been removed; the aggregator service is tested directly).
+        """
+        from wallet.aggregator_service import verify_and_credit_flw_topup
+
         topup = WalletTopUp.objects.create(
             student=self.student,
             payer_phone="256772111222",
@@ -94,16 +102,24 @@ class CanteenPayProductionTests(TestCase):
             platform_fee=Decimal("500.00"),
             status="PENDING",
         )
-        payload = json.dumps({
-            "externalId": str(topup.momo_reference_id),
-            "status": "SUCCESSFUL",
-        })
+        mock_verify.return_value = {
+            "status": "success",
+            "data": {
+                "status": "successful",
+                "currency": "UGX",
+                "amount": 5500,  # student_amount(5000) + platform_fee(500)
+                "tx_ref": str(topup.momo_reference_id),
+            },
+        }
 
-        # Send webhook twice
-        self.client.post("/api/momo/callback/", data=payload, content_type="application/json")
-        res2 = self.client.post("/api/momo/callback/", data=payload, content_type="application/json")
+        # First call: should credit
+        outcome1, _, _ = verify_and_credit_flw_topup(str(topup.momo_reference_id))
+        self.assertEqual(outcome1, "CREDITED")
 
-        self.assertEqual(res2.json()["message"], "Already processed")
+        # Second call: already processed
+        outcome2, _, _ = verify_and_credit_flw_topup(str(topup.momo_reference_id))
+        self.assertEqual(outcome2, "ALREADY_PROCESSED")
+
         self.student.refresh_from_db()
         self.assertEqual(self.student.wallet_balance, Decimal("15000.00"))
 
@@ -398,7 +414,15 @@ class CanteenPayProductionTests(TestCase):
         )
         self.assertEqual(ok_res.status_code, 200)
 
-    def test_pos_idempotency_double_tap_and_attendant_audit(self):
+    @patch("wallet.views.timezone")
+    def test_pos_idempotency_double_tap_and_attendant_audit(self, mock_tz):
+        from django.utils import timezone as real_tz
+
+        # Use a fixed "now" so the double-tap 10-second window is deterministic
+        fixed_now = real_tz.now()
+        mock_tz.now.return_value = fixed_now
+        mock_tz.localdate.return_value = fixed_now.date()
+
         self.client.login(username="canteen_staff", password="StrongPassword123!")
         payload = {
             "student_reg_no": "STD-2026-001",

@@ -14,6 +14,7 @@ from django.test import Client, RequestFactory, TestCase, TransactionTestCase, o
 from django.utils import timezone
 
 from wallet import sms_service
+from wallet.views import LOOKUP_RATE_LIMIT
 from wallet.models import (
     BursarCashTopUp,
     CanteenOrder,
@@ -806,6 +807,147 @@ class CanteenPayProductionTests(TestCase):
         self.assertIn("Duplicate cash deposit detected", second.content.decode())
         self.student.refresh_from_db()
         self.assertEqual(self.student.wallet_balance, Decimal("17000.00"))
+
+    # -------------------------------------------------------------------------
+    # Per-student daily spend limit
+    # -------------------------------------------------------------------------
+
+    def test_per_student_daily_limit_overrides_school_default(self):
+        """Student-level daily_spend_limit overrides school default."""
+        self.student.daily_spend_limit = Decimal("2000.00")
+        self.student.save(update_fields=["daily_spend_limit"])
+        # School default is 5000; student cap is 2000.
+        self.client.login(username="canteen_staff", password="StrongPassword123!")
+
+        # UGX 2500 exceeds the student's 2000 cap
+        res = self.client.post(
+            "/api/canteen/checkout/",
+            data=json.dumps(
+                {"student_reg_no": self.student.student_reg_no, "amount": 2500, "pin": "1234"}
+            ),
+            content_type="application/json",
+        )
+        self.assertEqual(res.status_code, 400)
+        body = res.json()
+        self.assertIn("Daily spending limit exceeded", body["error"])
+        self.assertIn("remaining_daily_limit", body)
+        self.assertEqual(Decimal(body["remaining_daily_limit"]), Decimal("2000.00"))
+
+        # UGX 1500 is within the 2000 cap — should succeed
+        res2 = self.client.post(
+            "/api/canteen/checkout/",
+            data=json.dumps(
+                {"student_reg_no": self.student.student_reg_no, "amount": 1500, "pin": "1234"}
+            ),
+            content_type="application/json",
+        )
+        self.assertEqual(res2.status_code, 200)
+        self.student.refresh_from_db()
+        self.assertEqual(self.student.wallet_balance, Decimal("8500.00"))
+
+    # -------------------------------------------------------------------------
+    # Whole-UGX enforcement
+    # -------------------------------------------------------------------------
+
+    def test_whole_ugx_enforcement_at_checkout(self):
+        """Fractional amounts are rejected at POS checkout."""
+        self.client.login(username="canteen_staff", password="StrongPassword123!")
+
+        res = self.client.post(
+            "/api/canteen/checkout/",
+            data=json.dumps(
+                {"student_reg_no": self.student.student_reg_no, "amount": 1500.50, "pin": "1234"}
+            ),
+            content_type="application/json",
+        )
+        self.assertEqual(res.status_code, 400)
+        self.assertIn("whole UGX", res.json()["error"])
+
+        # Exact integer amount should succeed
+        res2 = self.client.post(
+            "/api/canteen/checkout/",
+            data=json.dumps(
+                {"student_reg_no": self.student.student_reg_no, "amount": 1500, "pin": "1234"}
+            ),
+            content_type="application/json",
+        )
+        self.assertEqual(res2.status_code, 200)
+
+    @patch("wallet.aggregator_service.requests.post")
+    def test_whole_ugx_enforcement_at_topup(self, mock_post):
+        """Fractional top-up amounts are rejected before hitting Flutterwave."""
+        res = self.client.post(
+            "/api/parent/topup/",
+            data=json.dumps(
+                {
+                    "student_reg_no": self.student.student_reg_no,
+                    "amount": 10000.50,
+                    "payer_phone": "256772000001",
+                }
+            ),
+            content_type="application/json",
+        )
+        self.assertEqual(res.status_code, 400)
+        self.assertIn("whole UGX", res.json()["error"])
+        mock_post.assert_not_called()
+
+    # -------------------------------------------------------------------------
+    # Authenticated staff exempt from rate limit on lookup
+    # -------------------------------------------------------------------------
+
+    @override_settings(CACHES={"default": {"BACKEND": "django.core.cache.backends.locmem.LocMemCache"}})
+    def test_authenticated_staff_not_rate_limited_on_lookup(self):
+        """Logged-in staff are never blocked by the lookup rate limiter."""
+        cache.clear()
+        url = f"/api/student/lookup/?reg_no={self.student.student_reg_no}"
+
+        # Exhaust the anonymous rate limit from a spoofed IP
+        for _ in range(LOOKUP_RATE_LIMIT + 2):
+            self.client.get(url, HTTP_X_FORWARDED_FOR="10.0.0.1")
+
+        # Anonymous request at the same IP should now be blocked
+        anon_res = self.client.get(url, HTTP_X_FORWARDED_FOR="10.0.0.1")
+        self.assertEqual(anon_res.status_code, 429)
+
+        # Authenticated staff from the same IP must still get 200
+        self.client.login(username="canteen_staff", password="StrongPassword123!")
+        staff_res = self.client.get(url, HTTP_X_FORWARDED_FOR="10.0.0.1")
+        self.assertEqual(staff_res.status_code, 200)
+        body = staff_res.json()
+        self.assertEqual(body["full_name"], self.student.full_name)
+        self.assertNotIn("wallet_balance", body)
+
+    # -------------------------------------------------------------------------
+    # POS error includes remaining_daily_limit in JSON
+    # -------------------------------------------------------------------------
+
+    def test_pos_error_shows_remaining_daily_limit_in_json(self):
+        """Daily-limit exceeded response carries remaining_daily_limit field."""
+        self.client.login(username="canteen_staff", password="StrongPassword123!")
+
+        # Spend exactly at the school limit first
+        res = self.client.post(
+            "/api/canteen/checkout/",
+            data=json.dumps(
+                {"student_reg_no": self.student.student_reg_no, "amount": 5000, "pin": "1234"}
+            ),
+            content_type="application/json",
+        )
+        self.assertEqual(res.status_code, 200)
+
+        # Next purchase must exceed the limit — remaining should be 0
+        res2 = self.client.post(
+            "/api/canteen/checkout/",
+            data=json.dumps(
+                {"student_reg_no": self.student.student_reg_no, "amount": 100, "pin": "1234"}
+            ),
+            content_type="application/json",
+        )
+        self.assertEqual(res2.status_code, 400)
+        body = res2.json()
+        self.assertIn("Daily spending limit exceeded", body["error"])
+        self.assertIn("remaining_daily_limit", body)
+        self.assertEqual(Decimal(body["remaining_daily_limit"]), Decimal("0.00"))
 
 
 class OnCommitSMSTests(TransactionTestCase):

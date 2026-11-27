@@ -59,6 +59,23 @@
 let currentFlwAuthUrl = null;
 let currentReferenceId = null;
 let verifyPollTimer = null;
+let verifyPollCount = 0;
+const MAX_VERIFY_POLLS = 45;
+
+function startVerifyPolling(refId) {
+    if (verifyPollTimer) clearInterval(verifyPollTimer);
+    verifyPollCount = 0;
+    verifyPollTimer = setInterval(() => {
+        if (!currentReferenceId) return;
+        verifyPollCount += 1;
+        if (verifyPollCount > MAX_VERIFY_POLLS) {
+            clearInterval(verifyPollTimer);
+            verifyPollTimer = null;
+            return;
+        }
+        verifyTopUp(refId, true);
+    }, 4000);
+}
 
 function getCookie(name) {
     let cookieValue = null;
@@ -160,6 +177,9 @@ async function submitTopUp() {
         if (res.ok) {
             currentFlwAuthUrl = data.redirect_url || null;
             currentReferenceId = data.reference_id || null;
+            if (currentReferenceId) {
+                try { sessionStorage.setItem("canteenpay_pending_ref", currentReferenceId); } catch (_) {}
+            }
             alertBox.className = "alert info";
             alertBox.innerHTML = "";
 
@@ -184,12 +204,8 @@ async function submitTopUp() {
             verifyBtn.onclick = () => verifyTopUp(currentReferenceId, false);
             alertBox.appendChild(verifyBtn);
 
-            // Auto-check Flutterwave every 4 seconds so the parent gets hands-free confirmation
-            verifyPollTimer = setInterval(() => {
-                if (currentReferenceId) {
-                    verifyTopUp(currentReferenceId, true);
-                }
-            }, 4000);
+            // Auto-check Flutterwave every 4 seconds (up to 3 minutes)
+            startVerifyPolling(currentReferenceId);
         } else {
             alertBox.className = "alert err";
             alertBox.innerText = data.error || "Failed to initiate payment.";
@@ -225,11 +241,13 @@ async function verifyTopUp(refId, isSilent) {
 
         if (data.status === "SUCCESSFUL") {
             if (verifyPollTimer) clearInterval(verifyPollTimer);
+            try { sessionStorage.removeItem("canteenpay_pending_ref"); } catch (_) {}
             alertBox.style.display = "block";
             alertBox.className = "alert ok";
             alertBox.innerText = `✓ ${data.message} (New Balance: UGX ${Number(data.new_balance).toLocaleString()})`;
         } else if (data.status === "FAILED") {
             if (verifyPollTimer) clearInterval(verifyPollTimer);
+            try { sessionStorage.removeItem("canteenpay_pending_ref"); } catch (_) {}
             alertBox.style.display = "block";
             alertBox.className = "alert err";
             alertBox.innerText = data.error || "Payment was not completed.";
@@ -246,6 +264,18 @@ async function verifyTopUp(refId, isSilent) {
         }
     }
 }
+
+document.addEventListener("DOMContentLoaded", () => {
+    const params = new URLSearchParams(window.location.search);
+    let savedRef = null;
+    try { savedRef = sessionStorage.getItem("canteenpay_pending_ref"); } catch (_) {}
+    const resumeRef = (params.get("ref") || savedRef || "").trim();
+    if (resumeRef) {
+        currentReferenceId = resumeRef;
+        verifyTopUp(resumeRef, false);
+        startVerifyPolling(resumeRef);
+    }
+});
 
 function openFlwAuth() {
     if (!currentFlwAuthUrl || currentFlwAuthUrl === "undefined" || currentFlwAuthUrl === "null") {

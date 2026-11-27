@@ -169,6 +169,11 @@ def canteen_checkout(request):
 
     if amount <= 0:
         return JsonResponse({"error": "Invalid purchase amount."}, status=400)
+    if amount != amount.to_integral_value():
+        return JsonResponse(
+            {"error": "Enter a whole UGX purchase amount (no decimals)."},
+            status=400,
+        )
 
     try:
         with transaction.atomic():
@@ -227,8 +232,9 @@ def canteen_checkout(request):
 
             today = timezone.localdate()
             spent_today = _student_net_spent_today(student, today)
-            if (spent_today + amount) > student.school.daily_spend_limit:
-                remaining = student.school.daily_spend_limit - spent_today
+            daily_limit = student.effective_daily_spend_limit()
+            if (spent_today + amount) > daily_limit:
+                remaining = daily_limit - spent_today
                 return JsonResponse(
                     {
                         "error": "Daily spending limit exceeded.",
@@ -324,6 +330,10 @@ def initiate_parent_topup(request):
         return JsonResponse(
             {"error": "Minimum pocket money top-up is UGX 1,000."}, status=400
         )
+    if amount != amount.to_integral_value():
+        return JsonResponse(
+            {"error": "Enter a whole UGX top-up amount (no decimals)."}, status=400
+        )
 
     try:
         student = Student.objects.select_related("school").get(
@@ -350,6 +360,7 @@ def initiate_parent_topup(request):
             status="PENDING",
         )
 
+        return_url = request.build_absolute_uri(f"/?ref={momo_ref_id}")
         flw_res = initiate_ug_mobile_money_split(
             tx_ref=str(momo_ref_id),
             payer_phone=payer_phone,
@@ -357,6 +368,7 @@ def initiate_parent_topup(request):
             platform_fee=int(platform_fee),
             school_subaccount_id=subaccount_id,
             student_name=student.full_name,
+            redirect_url=return_url,
         )
 
         if flw_res.get("status") == "success":
@@ -384,15 +396,19 @@ def initiate_parent_topup(request):
         topup.status = "FAILED"
         topup.save(update_fields=["status"])
         logger.warning("Flutterwave rejected top-up %s: %s", momo_ref_id, flw_res)
-        return JsonResponse(
-            {
-                "error": (
-                    "Payment gateway could not start this transaction. "
-                    "Please verify your phone number and try again."
-                )
-            },
-            status=502,
-        )
+        gateway_msg = str(flw_res.get("message") or "").strip()
+        if (
+            gateway_msg
+            and not gateway_msg.startswith("Flutterwave connection error")
+            and not gateway_msg.startswith("Flutterwave returned non-JSON")
+        ):
+            user_err = f"Payment gateway rejected this request: {gateway_msg}"
+        else:
+            user_err = (
+                "Payment gateway could not start this transaction. "
+                "Please verify your phone number and try again."
+            )
+        return JsonResponse({"error": user_err}, status=502)
 
     except Student.DoesNotExist:
         return JsonResponse(
@@ -507,7 +523,7 @@ def check_student_balance(request):
             today = timezone.localdate()
             spent_today = _student_net_spent_today(student, today)
             remaining_daily = max(
-                student.school.daily_spend_limit - spent_today, Decimal("0.00")
+                student.effective_daily_spend_limit() - spent_today, Decimal("0.00")
             )
 
         return JsonResponse(
@@ -622,22 +638,23 @@ def policies_page(request):
 
 @require_GET
 def lookup_student(request):
-    ip = _client_ip(request)
-    cache_key = f"lookup_rl:{ip}"
-    if cache.add(cache_key, 1, timeout=LOOKUP_RATE_WINDOW_SECONDS):
-        attempts = 1
-    else:
-        try:
-            attempts = cache.incr(cache_key)
-        except ValueError:
-            cache.set(cache_key, 1, timeout=LOOKUP_RATE_WINDOW_SECONDS)
+    if not request.user.is_authenticated:
+        ip = _client_ip(request)
+        cache_key = f"lookup_rl:{ip}"
+        if cache.add(cache_key, 1, timeout=LOOKUP_RATE_WINDOW_SECONDS):
             attempts = 1
+        else:
+            try:
+                attempts = cache.incr(cache_key)
+            except ValueError:
+                cache.set(cache_key, 1, timeout=LOOKUP_RATE_WINDOW_SECONDS)
+                attempts = 1
 
-    if attempts > LOOKUP_RATE_LIMIT:
-        return JsonResponse(
-            {"error": "Too many lookup attempts. Please wait a minute."},
-            status=429,
-        )
+        if attempts > LOOKUP_RATE_LIMIT:
+            return JsonResponse(
+                {"error": "Too many lookup attempts. Please wait a minute."},
+                status=429,
+            )
 
     reg_no = request.GET.get("reg_no", "").strip()
     try:
@@ -694,9 +711,9 @@ def bursar_daily_report(request):
         except (InvalidOperation, ValueError):
             amount = Decimal("0")
 
-        if not reg_no or amount <= 0:
+        if not reg_no or amount <= 0 or amount != amount.to_integral_value():
             messages.error(
-                request, "Enter a valid CanteenPay code and a cash amount above 0."
+                request, "Enter a valid CanteenPay code and a whole UGX cash amount above 0."
             )
             return redirect(f"{request.path}?date={report_date:%Y-%m-%d}")
 

@@ -20,6 +20,7 @@ def initiate_ug_mobile_money_split(
     school_subaccount_id: str,
     student_name: str,
     parent_email: str = "parents@canteenpay.ug",
+    redirect_url: str = "",
 ) -> dict:
     """
     Initiates a Uganda Mobile Money (MTN or Airtel) charge via Flutterwave
@@ -52,6 +53,8 @@ def initiate_ug_mobile_money_split(
             }
         ],
     }
+    if redirect_url:
+        payload["redirect_url"] = redirect_url
 
     try:
         response = requests.post(url, json=payload, headers=headers, timeout=20)

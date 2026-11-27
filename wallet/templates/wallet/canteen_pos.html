@@ -337,7 +337,13 @@
                 scannedId.focus();
             } else {
                 alertBox.className = "alert err";
-                alertBox.innerText = data.error || "Transaction Declined";
+                let errMsg = data.error || "Transaction Declined";
+                if (data.remaining_daily_limit !== undefined) {
+                    errMsg += ` Remaining today: UGX ${Number(data.remaining_daily_limit).toLocaleString()}.`;
+                } else if (data.current_balance !== undefined) {
+                    errMsg += ` Current balance: UGX ${Number(data.current_balance).toLocaleString()}.`;
+                }
+                alertBox.innerText = errMsg;
             }
         } catch (err) {
             alertBox.style.display = "block";

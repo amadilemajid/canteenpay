@@ -91,9 +91,21 @@ class Student(models.Model):
     wallet_balance = models.DecimalField(
         max_digits=12, decimal_places=2, default=Decimal("0.00")
     )
+    daily_spend_limit = models.DecimalField(
+        max_digits=10,
+        decimal_places=2,
+        null=True,
+        blank=True,
+        help_text="Optional daily spend cap in UGX for this student. Leave blank to use the school's default limit.",
+    )
     failed_pin_attempts = models.PositiveSmallIntegerField(default=0)
     pin_locked_until = models.DateTimeField(null=True, blank=True)
     is_active = models.BooleanField(default=True)
+
+    def effective_daily_spend_limit(self) -> Decimal:
+        if self.daily_spend_limit is not None:
+            return self.daily_spend_limit
+        return self.school.daily_spend_limit
 
     def set_pin(self, raw_pin: str):
         self.pin_hash = make_password(raw_pin)

@@ -604,6 +604,32 @@ class CanteenPayProductionTests(TestCase):
         self.assertIn("wallet/js/html5-qrcode.min.js", html)
         self.assertNotIn("unpkg.com", html)
 
+    def test_pos_pwa_manifest_service_worker_and_meta_tags(self):
+        self.client.login(username="canteen_staff", password="StrongPassword123!")
+        pos_res = self.client.get("/pos/")
+        self.assertEqual(pos_res.status_code, 200)
+        html = pos_res.content.decode()
+        self.assertIn('rel="manifest" href="/manifest.json"', html)
+        self.assertIn('navigator.serviceWorker', html)
+        self.assertIn('"/sw.js"', html)
+
+        manifest_res = self.client.get("/manifest.json")
+        self.assertEqual(manifest_res.status_code, 200)
+        self.assertEqual(manifest_res["Content-Type"], "application/manifest+json")
+        manifest = manifest_res.json()
+        self.assertEqual(manifest["name"], "CanteenPay POS")
+        self.assertEqual(manifest["start_url"], "/pos/")
+        self.assertEqual(manifest["display"], "standalone")
+        self.assertTrue(any(i["sizes"] == "192x192" for i in manifest["icons"]))
+        self.assertTrue(any(i["sizes"] == "512x512" for i in manifest["icons"]))
+
+        sw_res = self.client.get("/sw.js")
+        self.assertEqual(sw_res.status_code, 200)
+        self.assertEqual(sw_res["Content-Type"], "application/javascript")
+        sw_body = sw_res.content.decode()
+        self.assertIn("/static/wallet/", sw_body)
+        self.assertIn("html5-qrcode.min.js", sw_body)
+
     def test_auto_code_allocation_csv_import_cards_noticeboard_and_pin_reset(self):
         school = School.objects.create(name="Yumbe Model", code_prefix="ymb")
         self.assertEqual(school.code_prefix, "YMB")

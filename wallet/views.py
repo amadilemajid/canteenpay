@@ -16,8 +16,9 @@ from django.core.cache import cache
 from django.core.exceptions import ValidationError
 from django.db import IntegrityError, transaction
 from django.db.models import Count, Q, Sum
-from django.http import JsonResponse
+from django.http import HttpResponse, JsonResponse
 from django.shortcuts import redirect, render
+from django.templatetags.static import static
 from django.utils import timezone
 from django.views.decorators.cache import never_cache
 from django.views.decorators.csrf import csrf_exempt, ensure_csrf_cookie
@@ -563,6 +564,105 @@ def parent_topup_page(request):
 @login_required(login_url="/admin/login/")
 def canteen_pos_page(request):
     return render(request, "wallet/canteen_pos.html")
+
+
+@require_GET
+@never_cache
+def pos_manifest(request):
+    """Web App Manifest so Android Chrome installs /pos/ as a standalone PWA."""
+    manifest = {
+        "name": "CanteenPay POS",
+        "short_name": "CanteenPay",
+        "description": "CanteenPay Uganda QR Scanner POS for School Canteens",
+        "id": "/pos/",
+        "start_url": "/pos/",
+        "scope": "/",
+        "display": "standalone",
+        "orientation": "portrait",
+        "background_color": "#111827",
+        "theme_color": "#0f172a",
+        "icons": [
+            {
+                "src": static("wallet/icons/icon-192.png"),
+                "sizes": "192x192",
+                "type": "image/png",
+                "purpose": "any",
+            },
+            {
+                "src": static("wallet/icons/icon-512.png"),
+                "sizes": "512x512",
+                "type": "image/png",
+                "purpose": "any",
+            },
+            {
+                "src": static("wallet/icons/icon-512-maskable.png"),
+                "sizes": "512x512",
+                "type": "image/png",
+                "purpose": "maskable",
+            },
+        ],
+    }
+    return JsonResponse(manifest, content_type="application/manifest+json")
+
+
+@require_GET
+@never_cache
+def pos_service_worker(request):
+    """
+    Minimal Service Worker for PWA installability.
+    Caches only immutable static POS assets (QR scanner JS + app icons) so
+    HTML/CSRF tokens, authentication redirects, and /api/ calls always hit the server.
+    """
+    precache_urls = json.dumps(
+        [
+            static("wallet/js/html5-qrcode.min.js"),
+            static("wallet/icons/icon-192.png"),
+            static("wallet/icons/icon-512.png"),
+        ]
+    )
+    sw_js = f"""const CACHE_NAME = "canteenpay-pos-static-v1";
+const PRECACHE_URLS = {precache_urls};
+
+self.addEventListener("install", (event) => {{
+    event.waitUntil(
+        caches.open(CACHE_NAME).then((cache) => cache.addAll(PRECACHE_URLS))
+    );
+    self.skipWaiting();
+}});
+
+self.addEventListener("activate", (event) => {{
+    event.waitUntil(
+        caches.keys().then((keys) =>
+            Promise.all(
+                keys.filter((k) => k !== CACHE_NAME).map((k) => caches.delete(k))
+            )
+        )
+    );
+    self.clients.claim();
+}});
+
+self.addEventListener("fetch", (event) => {{
+    if (event.request.method !== "GET") return;
+    const url = new URL(event.request.url);
+    if (url.origin !== self.location.origin) return;
+    if (!url.pathname.startsWith("/static/wallet/")) return;
+
+    event.respondWith(
+        caches.match(event.request).then(
+            (cached) =>
+                cached ||
+                fetch(event.request).then((res) => {{
+                    if (res && res.ok) {{
+                        const copy = res.clone();
+                        caches.open(CACHE_NAME).then((cache) => cache.put(event.request, copy));
+                    }}
+                    return res;
+                }})
+        )
+    );
+}});
+"""
+    return HttpResponse(sw_js, content_type="application/javascript")
 
 
 @login_required(login_url="/admin/login/")

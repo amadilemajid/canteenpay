@@ -35,7 +35,7 @@
     <p style="color:#6b7280; font-size:0.9rem;">Top up your child's school canteen wallet instantly via MTN MoMo or Airtel Money.</p>
 
     <label for="regNo">CanteenPay code</label>
-    <input type="text" id="regNo" placeholder="e.g. YMB-0042" onblur="verifyStudent()">
+    <input type="text" id="regNo" placeholder="e.g. ARI-0001 (from your child's card or SMS)" onblur="verifyStudent()">
     <div id="studentBadge" class="student-badge"></div>
 
     <label for="amount">Pocket Money Amount (UGX)</label>
@@ -44,7 +44,25 @@
     <label for="phone">Your Mobile Money Number (MTN or Airtel)</label>
     <input type="tel" id="phone" placeholder="e.g. 0772123456 or 0752123456" oninput="updateNetworkStyle()">
 
+    <!-- Live cost breakdown — shown when amount is valid -->
+    <div id="costBreakdown" style="
+        display:none;
+        margin-top:10px;
+        padding:10px 12px;
+        background:#f0fdf4;
+        border:1px solid #6ee7b7;
+        border-radius:8px;
+        font-size:0.88rem;
+        color:#065f46;
+        line-height:1.6;
+    "></div>
+
     <button id="payBtn" type="button" onclick="submitTopUp()">Send via Mobile Money (+UGX 500 Fee)</button>
+
+    <!-- Trust badge -->
+    <p style="margin:10px 0 0; text-align:center; font-size:0.82rem; color:#6b7280;">
+        🔒 100% of student pocket money settles directly into the school's official bank account.
+    </p>
     <div id="statusBox" class="status-box"></div>
 </div>
 
@@ -139,6 +157,25 @@ function updateNetworkStyle() {
         btn.innerText = "Send via Mobile Money (+UGX 500 Fee)";
     }
 }
+
+function updateCostBreakdown() {
+    const rawAmount = document.getElementById("amount").value.trim();
+    const breakdown = document.getElementById("costBreakdown");
+    const amt = parseFloat(rawAmount);
+    if (!rawAmount || isNaN(amt) || amt <= 0) {
+        breakdown.style.display = "none";
+        return;
+    }
+    const fee   = 500;
+    const total = amt + fee;
+    breakdown.innerHTML =
+        `<strong>Cost Summary:</strong><br>` +
+        `Student Wallet: <strong>UGX ${amt.toLocaleString()}</strong>` +
+        ` + Convenience Fee: <strong>UGX ${fee.toLocaleString()}</strong>` +
+        ` = Total Deducted: <strong>UGX ${total.toLocaleString()}</strong>`;
+    breakdown.style.display = "block";
+}
+document.getElementById("amount").addEventListener("input", updateCostBreakdown);
 
 async function submitTopUp() {
     const regNo = document.getElementById("regNo").value.trim();

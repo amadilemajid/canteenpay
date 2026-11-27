@@ -1,9 +1,9 @@
-import ssl
+import logging
+from decimal import Decimal
 from django.conf import settings
 from africastalking.SMS import SMSService
 
-# Fix SSL certificate verification on Windows for sandbox
-ssl._create_default_https_context = ssl._create_unverified_context
+logger = logging.getLogger(__name__)
 
 _PLACEHOLDER_PHONES = {"n/a", "-", "none"}
 
@@ -36,24 +36,62 @@ def send_welcome_pin_sms(parent_phone: str, student_name: str, class_stream: str
 
 
 def send_topup_receipt_sms(
-    parent_phone: str, student_name: str, amount_credited: str, new_balance: str
+    parent_phone: str,
+    student_name: str,
+    amount_credited: str,
+    new_balance: str,
+    tx_ref: str = "",
 ):
     """
-    Sends an instant SMS receipt to the parent once MTN MoMo confirms payment.
+    Sends an instant SMS receipt to the parent once payment is confirmed.
     Skips quietly when the student has no usable parent phone.
     """
     if not is_valid_phone(parent_phone):
         return None
 
+    amount_int = int(Decimal(str(amount_credited)))
+    balance_int = int(Decimal(str(new_balance)))
+    ref_part = f" Ref: {tx_ref}." if tx_ref else ""
     message = (
-        f"CanteenPay Receipt: UGX {int(float(amount_credited)):,} has been credited "
-        f"to {student_name}'s canteen wallet. New Balance: UGX {int(float(new_balance)):,}. "
+        f"CanteenPay Receipt: UGX {amount_int:,} has been credited "
+        f"to {student_name}'s canteen wallet. New Balance: UGX {balance_int:,}.{ref_part} "
         f"Thank you!"
     )
     return _send_sms(parent_phone, message)
 
 
+def send_refund_receipt_sms(
+    parent_phone: str, student_name: str, amount_refunded: str, new_balance: str
+):
+    """Notifies the parent when a canteen order is refunded to the student's wallet."""
+    if not is_valid_phone(parent_phone):
+        return None
+
+    amount_int = int(Decimal(str(amount_refunded)))
+    balance_int = int(Decimal(str(new_balance)))
+    message = (
+        f"CanteenPay Refund: UGX {amount_int:,} has been refunded "
+        f"to {student_name}'s canteen wallet. New Balance: UGX {balance_int:,}."
+    )
+    return _send_sms(parent_phone, message)
+
+
+def send_pin_lockout_alert_sms(parent_phone: str, student_name: str, code: str):
+    """Alerts the parent if a student's PIN is temporarily locked after 5 failed attempts."""
+    if not is_valid_phone(parent_phone):
+        return None
+
+    message = (
+        f"CanteenPay Security Alert: Wallet {code} ({student_name}) was locked for 15 minutes "
+        f"after 5 incorrect PIN attempts. Contact the school bursar if needed."
+    )
+    return _send_sms(parent_phone, message)
+
+
 def _send_sms(parent_phone: str, message: str):
+    if not is_valid_phone(parent_phone):
+        return None
+
     # Instantiate directly to avoid stale global state from africastalking.initialize()
     sms = SMSService(settings.AT_USERNAME, settings.AT_API_KEY)
 
@@ -70,8 +108,7 @@ def _send_sms(parent_phone: str, message: str):
 
     try:
         response = sms.send(message, [formatted_phone])
-        print(f"SMS sent: {response}")
         return response
-    except Exception as e:
-        print(f"SMS delivery error: {e}")
+    except Exception:
+        logger.exception("SMS delivery failed for %s", formatted_phone)
         return None

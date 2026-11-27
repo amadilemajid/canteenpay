@@ -5,13 +5,22 @@
     <title>CanteenPay | Bursar Daily Settlement Report</title>
     <style>
         body { font-family: system-ui, sans-serif; background: #f9fafb; padding: 24px; color: #111827; }
-        .wrapper { max-width: 900px; margin: 0 auto; background: #fff; padding: 24px; border-radius: 10px; box-shadow: 0 2px 8px rgba(0,0,0,0.06); }
-        .header { display: flex; justify-content: space-between; align-items: center; border-bottom: 2px solid #e5e7eb; padding-bottom: 14px; }
+        .wrapper { max-width: 980px; margin: 0 auto; background: #fff; padding: 24px; border-radius: 10px; box-shadow: 0 2px 8px rgba(0,0,0,0.06); }
+        .header { display: flex; justify-content: space-between; align-items: center; border-bottom: 2px solid #e5e7eb; padding-bottom: 14px; flex-wrap: wrap; gap: 12px; }
         table { width: 100%; border-collapse: collapse; margin-top: 20px; }
         th, td { padding: 12px; border-bottom: 1px solid #e5e7eb; text-align: left; }
         th { background: #f3f4f6; font-size: 0.9rem; }
         .money { font-family: monospace; font-weight: bold; font-size: 1rem; }
-        .btn { padding: 8px 16px; background: #111827; color: #fff; border: none; border-radius: 6px; cursor: pointer; }
+        .btn { padding: 8px 16px; background: #111827; color: #fff; border: none; border-radius: 6px; cursor: pointer; font-weight: 600; }
+        .cash-box { margin-top: 28px; padding: 18px; border: 1px solid #d1d5db; border-radius: 8px; background: #f8fafc; }
+        .cash-box h3 { margin: 0 0 12px; font-size: 1.05rem; color: #065f46; }
+        .cash-form { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; align-items: end; }
+        .cash-form label { display: block; font-size: 0.85rem; font-weight: 600; margin-bottom: 4px; color: #374151; }
+        .cash-form input { width: 100%; padding: 9px 10px; border: 1px solid #d1d5db; border-radius: 6px; box-sizing: border-box; font-size: 0.95rem; }
+        .msg { padding: 12px 14px; border-radius: 6px; margin-top: 14px; font-size: 0.92rem; font-weight: 600; }
+        .msg-success { background: #d1fae5; color: #065f46; border: 1px solid #10b981; }
+        .msg-error { background: #fef2f2; color: #991b1b; border: 1px solid #f87171; }
+        .subnote { display: block; font-size: 0.8rem; color: #6b7280; font-weight: normal; }
         @media print { .no-print { display: none; } }
     </style>
 </head>
@@ -31,28 +40,103 @@
         </div>
     </div>
 
+    {% if messages %}
+        {% for message in messages %}
+            <div class="msg {% if message.tags == 'error' %}msg-error{% else %}msg-success{% endif %}">
+                {{ message }}
+            </div>
+        {% endfor %}
+    {% endif %}
+
     <table>
         <thead>
             <tr>
                 <th>School Name</th>
-                <th>Parent Top-Ups (Inflow)</th>
-                <th>Canteen Sales (Payout Due)</th>
-                <th>Your Platform Fees</th>
+                <th>Online Top-Ups Settled to School Bank</th>
+                <th>Cash Top-Ups Collected at Bursar Desk</th>
+                <th>Canteen Sales (Vendor Payout Due)</th>
+                <th>Platform Fees</th>
             </tr>
         </thead>
         <tbody>
             {% for row in schools_data %}
             <tr>
                 <td><strong>{{ row.school_name }}</strong></td>
-                <td class="money">UGX {{ row.parent_topups|floatformat:0 }} <small>({{ row.topup_count }} txns)</small></td>
-                <td class="money" style="color:#059669;">UGX {{ row.canteen_sales|floatformat:0 }} <small>({{ row.order_count }} sales)</small></td>
+                <td class="money">
+                    UGX {{ row.online_topups|floatformat:0 }}
+                    <span class="subnote">{{ row.online_topup_count }} online txn{{ row.online_topup_count|pluralize }}</span>
+                </td>
+                <td class="money" style="color:#0369a1;">
+                    UGX {{ row.cash_topups|floatformat:0 }}
+                    <span class="subnote">{{ row.cash_topup_count }} cash receipt{{ row.cash_topup_count|pluralize }}</span>
+                </td>
+                <td class="money" style="color:#059669;">
+                    UGX {{ row.canteen_sales|floatformat:0 }}
+                    <span class="subnote">
+                        {{ row.order_count }} sale{{ row.order_count|pluralize }}
+                        {% if row.refund_total > 0 %} (after UGX {{ row.refund_total|floatformat:0 }} refunded){% endif %}
+                    </span>
+                </td>
                 <td class="money" style="color:#2563eb;">UGX {{ row.platform_revenue|floatformat:0 }}</td>
             </tr>
             {% empty %}
-            <tr><td colspan="4">No schools registered yet.</td></tr>
+            <tr><td colspan="5">No schools registered yet.</td></tr>
             {% endfor %}
         </tbody>
     </table>
+
+    <div class="cash-box no-print">
+        <h3>Bursar Cash-In Desk (Physical Cash Top-Up)</h3>
+        <form method="post" class="cash-form">
+            {% csrf_token %}
+            <input type="hidden" name="report_date" value="{{ report_date|date:'Y-m-d' }}">
+            <div>
+                <label for="cashRegNo">CanteenPay Code</label>
+                <input type="text" id="cashRegNo" name="student_reg_no" placeholder="e.g. YMB-0042" required>
+            </div>
+            <div>
+                <label for="cashAmount">Cash Amount (UGX)</label>
+                <input type="number" id="cashAmount" name="amount" min="500" step="500" placeholder="e.g. 20000" required>
+            </div>
+            <div>
+                <label for="cashNote">Receipt / Book Note</label>
+                <input type="text" id="cashNote" name="receipt_note" placeholder="e.g. Visiting Day Cash #104">
+            </div>
+            <div>
+                <button type="submit" class="btn" style="width:100%; background:#065f46; padding:10px;">Record Cash Top-Up</button>
+            </div>
+        </form>
+    </div>
+
+    {% if recent_cash_topups %}
+    <h3 style="margin-top:26px; font-size:1rem;">Bursar Cash-In Log ({{ report_date }})</h3>
+    <table>
+        <thead>
+            <tr>
+                <th>Time</th>
+                <th>Code</th>
+                <th>Student</th>
+                <th>School</th>
+                <th>Amount</th>
+                <th>Receipt Note</th>
+                <th>Received By</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for cash in recent_cash_topups %}
+            <tr>
+                <td>{{ cash.created_at|date:"H:i" }}</td>
+                <td style="font-family:monospace; font-weight:bold;">{{ cash.student.student_reg_no }}</td>
+                <td>{{ cash.student.full_name }}</td>
+                <td>{{ cash.student.school.name }}</td>
+                <td class="money">UGX {{ cash.amount|floatformat:0 }}</td>
+                <td>{{ cash.receipt_note|default:"-" }}</td>
+                <td>{{ cash.received_by.username|default:"staff" }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    {% endif %}
 </div>
 </body>
 </html>

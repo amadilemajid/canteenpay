@@ -8,7 +8,14 @@ from django.contrib.auth.hashers import make_password
 from django.shortcuts import render
 from django.urls import path
 
-from .models import CanteenOrder, School, Student, WalletTopUp
+from .models import (
+    BursarCashTopUp,
+    CanteenOrder,
+    CanteenRefund,
+    School,
+    Student,
+    WalletTopUp,
+)
 from .sms_service import is_valid_phone, send_welcome_pin_sms
 from .views import wallet_card_pages
 
@@ -85,6 +92,7 @@ class StudentAdmin(admin.ModelAdmin):
     search_fields = ("student_reg_no", "full_name", "class_stream", "parent_phone")
     list_filter = ("school", "is_active")
     exclude = ("pin_hash",)
+    readonly_fields = ("wallet_balance", "failed_pin_attempts", "pin_locked_until")
     actions = ["print_wallet_cards", "reset_pin_and_print_slip"]
     change_list_template = "admin/wallet/student_changelist.html"
 
@@ -295,4 +303,41 @@ class WalletTopUpAdmin(admin.ModelAdmin):
 
 @admin.register(CanteenOrder)
 class CanteenOrderAdmin(admin.ModelAdmin):
-    list_display = ("student", "amount", "items_note", "created_at")
+    list_display = ("student", "amount", "items_note", "attendant", "created_at")
+    search_fields = ("student__student_reg_no", "student__full_name", "attendant__username")
+    readonly_fields = ("student", "attendant", "idempotency_key", "amount", "items_note", "created_at")
+
+
+@admin.register(CanteenRefund)
+class CanteenRefundAdmin(admin.ModelAdmin):
+    list_display = ("order", "amount", "reason", "refunded_by", "created_at")
+    readonly_fields = ("refunded_by", "created_at")
+
+    def save_model(self, request, obj, form, change):
+        if not change and not obj.refunded_by:
+            obj.refunded_by = request.user
+        super().save_model(request, obj, form, change)
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
+
+
+@admin.register(BursarCashTopUp)
+class BursarCashTopUpAdmin(admin.ModelAdmin):
+    list_display = ("student", "amount", "receipt_note", "received_by", "created_at")
+    search_fields = ("student__student_reg_no", "student__full_name", "receipt_note")
+    readonly_fields = ("received_by", "created_at")
+
+    def save_model(self, request, obj, form, change):
+        if not change and not obj.received_by:
+            obj.received_by = request.user
+        super().save_model(request, obj, form, change)
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False

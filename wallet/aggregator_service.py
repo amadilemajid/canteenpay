@@ -1,5 +1,10 @@
+from decimal import Decimal, InvalidOperation
 import requests
 from django.conf import settings
+from django.db import transaction
+
+from .models import Student, WalletTopUp
+from .sms_service import send_topup_receipt_sms
 
 
 def initiate_ug_mobile_money_split(
@@ -71,3 +76,69 @@ def verify_flw_transaction_by_ref(tx_ref: str) -> dict:
         return response.json()
     except Exception as e:
         return {"status": "error", "message": str(e)}
+
+
+def _parse_decimal(value) -> Decimal:
+    try:
+        return Decimal(str(value if value is not None else "0"))
+    except (InvalidOperation, TypeError, ValueError):
+        return Decimal("0")
+
+
+def verify_and_credit_flw_topup(reference_id):
+    """
+    Verifies a WalletTopUp server-side against Flutterwave inside a locked
+    atomic transaction and credits the student's wallet only if all payment
+    integrity checks pass.
+    Returns (outcome, topup, student) where outcome is one of:
+    ALREADY_PROCESSED, NOT_PENDING, CREDITED, FAILED, PENDING.
+    """
+    with transaction.atomic():
+        topup = WalletTopUp.objects.select_for_update().get(
+            momo_reference_id=reference_id
+        )
+        if topup.status == "SUCCESSFUL":
+            return "ALREADY_PROCESSED", topup, topup.student
+        if topup.status != "PENDING":
+            return "NOT_PENDING", topup, topup.student
+
+        flw_check = verify_flw_transaction_by_ref(str(topup.momo_reference_id))
+        tx_data = flw_check.get("data") or {}
+        paid_amount = _parse_decimal(tx_data.get("amount"))
+        expected_total = topup.amount + topup.platform_fee
+
+        if (
+            flw_check.get("status") == "success"
+            and tx_data.get("status") == "successful"
+            and tx_data.get("currency") == "UGX"
+            and paid_amount >= expected_total
+        ):
+            topup.status = "SUCCESSFUL"
+            topup.save(update_fields=["status"])
+
+            student = Student.objects.select_for_update().get(id=topup.student_id)
+            student.wallet_balance += topup.amount
+            student.save(update_fields=["wallet_balance"])
+
+            short_ref = str(topup.momo_reference_id)[:8].upper()
+            parent_phone = student.parent_phone
+            student_name = student.full_name
+            amount_str = str(topup.amount)
+            new_balance_str = str(student.wallet_balance)
+            transaction.on_commit(
+                lambda: send_topup_receipt_sms(
+                    parent_phone=parent_phone,
+                    student_name=student_name,
+                    amount_credited=amount_str,
+                    new_balance=new_balance_str,
+                    tx_ref=short_ref,
+                )
+            )
+            return "CREDITED", topup, student
+
+        if flw_check.get("status") == "success" and tx_data.get("status") == "failed":
+            topup.status = "FAILED"
+            topup.save(update_fields=["status"])
+            return "FAILED", topup, topup.student
+
+        return "PENDING", topup, topup.student

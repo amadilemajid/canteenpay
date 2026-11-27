@@ -1,7 +1,11 @@
 import uuid
 from decimal import Decimal
+from django.conf import settings
+from django.core.exceptions import ValidationError
 from django.db import models, transaction
 from django.contrib.auth.hashers import make_password, check_password
+
+from .sms_service import send_refund_receipt_sms, send_topup_receipt_sms
 
 
 class School(models.Model):
@@ -87,6 +91,8 @@ class Student(models.Model):
     wallet_balance = models.DecimalField(
         max_digits=12, decimal_places=2, default=Decimal("0.00")
     )
+    failed_pin_attempts = models.PositiveSmallIntegerField(default=0)
+    pin_locked_until = models.DateTimeField(null=True, blank=True)
     is_active = models.BooleanField(default=True)
 
     def set_pin(self, raw_pin: str):
@@ -135,9 +141,121 @@ class WalletTopUp(models.Model):
 class CanteenOrder(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     student = models.ForeignKey(Student, on_delete=models.CASCADE, related_name="orders")
+    attendant = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="canteen_orders",
+    )
+    idempotency_key = models.CharField(max_length=64, unique=True, null=True, blank=True)
     amount = models.DecimalField(max_digits=10, decimal_places=2)
     items_note = models.CharField(max_length=255, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
     def __str__(self):
         return f"{self.student.full_name} - UGX {self.amount}"
+
+
+class CanteenRefund(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    order = models.OneToOneField(
+        CanteenOrder, on_delete=models.CASCADE, related_name="refund"
+    )
+    amount = models.DecimalField(max_digits=10, decimal_places=2)
+    reason = models.CharField(max_length=255)
+    refunded_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="canteen_refunds",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    def clean(self):
+        if self.amount is None or self.amount <= 0:
+            raise ValidationError({"amount": "Refund amount must be greater than zero."})
+        if self.order_id and self.amount > self.order.amount:
+            raise ValidationError(
+                {"amount": "Refund amount cannot exceed the original order amount."}
+            )
+
+    def save(self, *args, **kwargs):
+        if not self._state.adding:
+            super().save(*args, **kwargs)
+            return
+
+        self.clean()
+        with transaction.atomic():
+            student = Student.objects.select_for_update().get(pk=self.order.student_id)
+            student.wallet_balance += self.amount
+            student.save(update_fields=["wallet_balance"])
+            super().save(*args, **kwargs)
+
+            parent_phone = student.parent_phone
+            student_name = student.full_name
+            refund_amount_str = str(self.amount)
+            new_balance_str = str(student.wallet_balance)
+            transaction.on_commit(
+                lambda: send_refund_receipt_sms(
+                    parent_phone=parent_phone,
+                    student_name=student_name,
+                    amount_refunded=refund_amount_str,
+                    new_balance=new_balance_str,
+                )
+            )
+
+    def __str__(self):
+        return f"Refund {self.order.student.student_reg_no} - UGX {self.amount}"
+
+
+class BursarCashTopUp(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    student = models.ForeignKey(
+        Student, on_delete=models.CASCADE, related_name="cash_topups"
+    )
+    amount = models.DecimalField(max_digits=10, decimal_places=2)
+    receipt_note = models.CharField(max_length=255, blank=True)
+    received_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="received_cash_topups",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    def clean(self):
+        if self.amount is None or self.amount <= 0:
+            raise ValidationError({"amount": "Cash top-up amount must be greater than zero."})
+
+    def save(self, *args, **kwargs):
+        if not self._state.adding:
+            super().save(*args, **kwargs)
+            return
+
+        self.clean()
+        with transaction.atomic():
+            student = Student.objects.select_for_update().get(pk=self.student_id)
+            student.wallet_balance += self.amount
+            student.save(update_fields=["wallet_balance"])
+            super().save(*args, **kwargs)
+
+            parent_phone = student.parent_phone
+            student_name = student.full_name
+            amount_str = str(self.amount)
+            new_balance_str = str(student.wallet_balance)
+            cash_ref = f"CASH-{str(self.id)[:8].upper()}"
+            transaction.on_commit(
+                lambda: send_topup_receipt_sms(
+                    parent_phone=parent_phone,
+                    student_name=student_name,
+                    amount_credited=amount_str,
+                    new_balance=new_balance_str,
+                    tx_ref=cash_ref,
+                )
+            )
+
+    def __str__(self):
+        return f"Cash {self.student.student_reg_no} - UGX {self.amount}"

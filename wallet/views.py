@@ -1,25 +1,49 @@
 import base64
+import hmac
 import io
-import uuid
 import json
+import logging
+import uuid
+from datetime import timedelta
+from decimal import Decimal, InvalidOperation
+
 import qrcode
-from decimal import Decimal
 from django.conf import settings
-from django.contrib.auth.decorators import login_required
+from django.contrib import messages
 from django.contrib.admin.views.decorators import staff_member_required
-from django.db import transaction
-from django.db.models import Sum, Count, Q
+from django.contrib.auth.decorators import login_required
+from django.core.exceptions import ValidationError
+from django.db import IntegrityError, transaction
+from django.db.models import Count, Q, Sum
 from django.http import JsonResponse
-from django.shortcuts import render
+from django.shortcuts import redirect, render
 from django.utils import timezone
 from django.views.decorators.cache import never_cache
-from django.views.decorators.csrf import csrf_exempt
-from django.views.decorators.http import require_POST, require_GET
-from .models import School, Student, WalletTopUp, CanteenOrder
-from .momo_service import send_request_to_pay
-from .sms_service import send_topup_receipt_sms
-from .airtel_service import send_airtel_ussd_push
-from .aggregator_service import initiate_ug_mobile_money_split, verify_flw_transaction_by_ref
+from django.views.decorators.csrf import csrf_exempt, ensure_csrf_cookie
+from django.views.decorators.http import require_GET, require_POST
+
+from .aggregator_service import (
+    initiate_ug_mobile_money_split,
+    verify_and_credit_flw_topup,
+)
+from .models import (
+    BursarCashTopUp,
+    CanteenOrder,
+    CanteenRefund,
+    School,
+    Student,
+    WalletTopUp,
+)
+from .sms_service import (
+    send_pin_lockout_alert_sms,
+    send_topup_receipt_sms,
+)
+
+logger = logging.getLogger(__name__)
+
+PIN_MAX_ATTEMPTS = 5
+PIN_LOCKOUT_MINUTES = 15
+DOUBLE_TAP_WINDOW_SECONDS = 10
 
 
 def normalize_ug_phone(phone: str) -> str:
@@ -32,37 +56,155 @@ def normalize_ug_phone(phone: str) -> str:
     return cleaned
 
 
+def _parse_json_body(request):
+    try:
+        data = json.loads(request.body or "{}")
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def _is_placeholder_flw_key(secret_key: str) -> bool:
+    key = (secret_key or "").strip().upper()
+    return (
+        not key
+        or "TEST" in key
+        or "YOUR-SECRET-KEY" in key
+        or "PLACEHOLDER" in key
+    )
+
+
+def _student_net_spent_today(student, today) -> Decimal:
+    spent_today = (
+        CanteenOrder.objects.filter(student=student, created_at__date=today).aggregate(
+            total=Sum("amount")
+        )["total"]
+        or Decimal("0.00")
+    )
+    refunded_today = (
+        CanteenRefund.objects.filter(
+            order__student=student, order__created_at__date=today
+        ).aggregate(total=Sum("amount"))["total"]
+        or Decimal("0.00")
+    )
+    return max(spent_today - refunded_today, Decimal("0.00"))
+
+
+def _verify_pin_or_lockout(student: Student, raw_pin: str):
+    """
+    Shared 5-attempt PIN check and 15-minute lockout across POS endpoints.
+    Must be called inside transaction.atomic() with the student row locked.
+    Returns None when valid, or a JsonResponse on failure/lockout.
+    """
+    now = timezone.now()
+    if student.pin_locked_until and student.pin_locked_until > now:
+        return JsonResponse(
+            {"error": "PIN locked after 5 wrong attempts. Try again in 15 minutes."},
+            status=423,
+        )
+
+    if not raw_pin or not student.verify_pin(raw_pin):
+        student.failed_pin_attempts += 1
+        if student.failed_pin_attempts >= PIN_MAX_ATTEMPTS:
+            student.pin_locked_until = now + timedelta(minutes=PIN_LOCKOUT_MINUTES)
+            student.failed_pin_attempts = 0
+            student.save(update_fields=["failed_pin_attempts", "pin_locked_until"])
+
+            parent_phone = student.parent_phone
+            student_name = student.full_name
+            code = student.student_reg_no
+            transaction.on_commit(
+                lambda: send_pin_lockout_alert_sms(parent_phone, student_name, code)
+            )
+            return JsonResponse(
+                {"error": "PIN locked after 5 wrong attempts. Try again in 15 minutes."},
+                status=423,
+            )
+
+        student.save(update_fields=["failed_pin_attempts"])
+        return JsonResponse({"error": "Incorrect student PIN."}, status=401)
+
+    if student.failed_pin_attempts != 0 or student.pin_locked_until is not None:
+        student.failed_pin_attempts = 0
+        student.pin_locked_until = None
+        student.save(update_fields=["failed_pin_attempts", "pin_locked_until"])
+    return None
+
+
 @login_required(login_url="/admin/login/")
-@csrf_exempt
 @require_POST
 def canteen_checkout(request):
     """
     Called by the canteen tablet after scanning the student's QR code
     and entering the purchase amount + student's 4-digit PIN.
     """
+    data = _parse_json_body(request)
+    if data is None:
+        return JsonResponse({"error": "Invalid request payload."}, status=400)
+
+    reg_no = str(data.get("student_reg_no", "")).strip()
+    raw_pin = str(data.get("pin", "")).strip()
+    items_note = str(data.get("items_note", "")).strip()[:255]
+    raw_idem = str(data.get("idempotency_key") or "").strip()[:64]
+    idempotency_key = raw_idem or None
+
+    if not reg_no:
+        return JsonResponse({"error": "CanteenPay code is required."}, status=400)
+
     try:
-        data = json.loads(request.body)
-        reg_no = data.get("student_reg_no", "").strip()
-        raw_pin = str(data.get("pin", "")).strip()
         amount = Decimal(str(data.get("amount", "0")))
-        items_note = data.get("items_note", "")
+    except (InvalidOperation, ValueError, TypeError):
+        return JsonResponse({"error": "Invalid purchase amount."}, status=400)
 
-        if amount <= 0:
-            return JsonResponse({"error": "Invalid purchase amount."}, status=400)
+    if amount <= 0:
+        return JsonResponse({"error": "Invalid purchase amount."}, status=400)
 
+    try:
         with transaction.atomic():
-            # Lock the student row until this transaction finishes
             student = (
                 Student.objects.select_for_update()
                 .select_related("school")
                 .get(student_reg_no__iexact=reg_no, is_active=True)
             )
 
-            # 1. Verify 4-digit PIN
-            if not student.verify_pin(raw_pin):
-                return JsonResponse({"error": "Incorrect student PIN."}, status=401)
+            pin_error = _verify_pin_or_lockout(student, raw_pin)
+            if pin_error is not None:
+                return pin_error
 
-            # 2. Check wallet balance
+            if idempotency_key:
+                existing_order = CanteenOrder.objects.filter(
+                    idempotency_key=idempotency_key
+                ).first()
+                if existing_order is not None:
+                    if existing_order.student_id == student.id:
+                        return JsonResponse(
+                            {
+                                "status": "APPROVED",
+                                "order_id": str(existing_order.id),
+                                "student_name": student.full_name,
+                                "new_balance": str(student.wallet_balance),
+                                "duplicate": True,
+                            },
+                            status=200,
+                        )
+                    return JsonResponse(
+                        {"error": "Duplicate transaction key."}, status=409
+                    )
+
+            recent_cutoff = timezone.now() - timedelta(seconds=DOUBLE_TAP_WINDOW_SECONDS)
+            if CanteenOrder.objects.filter(
+                student=student, amount=amount, created_at__gte=recent_cutoff
+            ).exists():
+                return JsonResponse(
+                    {
+                        "error": (
+                            "Duplicate purchase detected. Wait 10 seconds before "
+                            "charging the same amount again."
+                        )
+                    },
+                    status=409,
+                )
+
             if student.wallet_balance < amount:
                 return JsonResponse(
                     {
@@ -72,15 +214,8 @@ def canteen_checkout(request):
                     status=400,
                 )
 
-            # 3. Check school's daily spending limit
             today = timezone.now().date()
-            spent_today = (
-                CanteenOrder.objects.filter(
-                    student=student, created_at__date=today
-                ).aggregate(total=Sum("amount"))["total"]
-                or Decimal("0.00")
-            )
-
+            spent_today = _student_net_spent_today(student, today)
             if (spent_today + amount) > student.school.daily_spend_limit:
                 remaining = student.school.daily_spend_limit - spent_today
                 return JsonResponse(
@@ -91,12 +226,15 @@ def canteen_checkout(request):
                     status=400,
                 )
 
-            # 4. Deduct balance & record canteen receipt
             student.wallet_balance -= amount
             student.save(update_fields=["wallet_balance"])
 
             order = CanteenOrder.objects.create(
-                student=student, amount=amount, items_note=items_note
+                student=student,
+                attendant=request.user,
+                idempotency_key=idempotency_key,
+                amount=amount,
+                items_note=items_note,
             )
 
         return JsonResponse(
@@ -111,29 +249,35 @@ def canteen_checkout(request):
 
     except Student.DoesNotExist:
         return JsonResponse({"error": "Student ID not found or inactive."}, status=404)
-    except Exception as e:
-        return JsonResponse({"error": str(e)}, status=500)
+    except IntegrityError:
+        return JsonResponse({"error": "Duplicate purchase submission."}, status=409)
+    except Exception:
+        logger.exception("Unexpected error during canteen_checkout for %s", reg_no)
+        return JsonResponse(
+            {"error": "Unable to complete checkout right now. Please try again."},
+            status=500,
+        )
 
 
 @csrf_exempt
 @require_POST
 def momo_callback_webhook(request):
     """
-    X-Callback-Url endpoint hit automatically by MTN MoMo when a parent
-    completes or cancels a pocket-money top-up on their phone.
+    Legacy MTN MoMo callback endpoint retained for existing callback tests.
     """
-    try:
-        payload = json.loads(request.body)
-        print("MoMo Callback Payload:", payload)  # DEBUG
-        reference_id = payload.get("externalId") or payload.get("referenceId")
-        momo_status = payload.get("status")  # "SUCCESSFUL" or "FAILED"
+    payload = _parse_json_body(request)
+    if payload is None:
+        return JsonResponse({"error": "Invalid JSON payload"}, status=400)
 
+    reference_id = payload.get("externalId") or payload.get("referenceId")
+    momo_status = payload.get("status")
+
+    try:
         with transaction.atomic():
             topup = WalletTopUp.objects.select_for_update().get(
                 momo_reference_id=reference_id
             )
 
-            # Idempotency check: ignore duplicate callbacks if already processed
             if topup.status != "PENDING":
                 return JsonResponse({"message": "Already processed"}, status=200)
 
@@ -145,12 +289,19 @@ def momo_callback_webhook(request):
                 student.wallet_balance += topup.amount
                 student.save(update_fields=["wallet_balance"])
 
-                # Send instant SMS receipt to parent
-                send_topup_receipt_sms(
-                    parent_phone=student.parent_phone,
-                    student_name=student.full_name,
-                    amount_credited=str(topup.amount),
-                    new_balance=str(student.wallet_balance),
+                short_ref = str(topup.momo_reference_id)[:8].upper()
+                parent_phone = student.parent_phone
+                student_name = student.full_name
+                amount_str = str(topup.amount)
+                new_balance_str = str(student.wallet_balance)
+                transaction.on_commit(
+                    lambda: send_topup_receipt_sms(
+                        parent_phone=parent_phone,
+                        student_name=student_name,
+                        amount_credited=amount_str,
+                        new_balance=new_balance_str,
+                        tx_ref=short_ref,
+                    )
                 )
             else:
                 topup.status = "FAILED"
@@ -158,38 +309,64 @@ def momo_callback_webhook(request):
 
         return JsonResponse({"message": "Callback processed"}, status=200)
 
-    except WalletTopUp.DoesNotExist:
+    except (WalletTopUp.DoesNotExist, ValidationError, ValueError):
         return JsonResponse({"error": "TopUp reference not found"}, status=404)
 
 
-@csrf_exempt
 @require_POST
 def initiate_parent_topup(request):
     """
-    Triggers a Mobile Money prompt on the parent's phone.
-    Automatically uses Flutterwave Split-Payment when the school has a
-    subaccount_id configured so funds settle directly to the school's bank.
+    Triggers a Flutterwave Split-Payment Mobile Money prompt on the parent's phone.
+    Direct unsplit MTN/Airtel fallback routes are disabled so funds always route
+    to a school's verified Flutterwave subaccount.
     """
+    if settings.LIVE_PAYMENTS_ENABLED and _is_placeholder_flw_key(
+        settings.FLW_SECRET_KEY
+    ):
+        return JsonResponse(
+            {"error": "Online payments are temporarily unavailable."},
+            status=503,
+        )
+
+    data = _parse_json_body(request)
+    if data is None:
+        return JsonResponse({"error": "Invalid request payload."}, status=400)
+
+    reg_no = str(data.get("student_reg_no", "")).strip()
+    raw_phone = str(data.get("payer_phone", "")).strip()
+
+    if not reg_no or not raw_phone:
+        return JsonResponse(
+            {"error": "CanteenPay code and Mobile Money number are required."},
+            status=400,
+        )
+
     try:
-        data = json.loads(request.body)
-        reg_no = data.get("student_reg_no", "").strip()
-        raw_phone = data.get("payer_phone", "")
         amount = Decimal(str(data.get("amount", "0")))
+    except (InvalidOperation, ValueError, TypeError):
+        return JsonResponse({"error": "Invalid top-up amount."}, status=400)
 
-        if amount < Decimal("1000"):
-            return JsonResponse(
-                {"error": "Minimum pocket money top-up is UGX 1,000."}, status=400
-            )
+    if amount < Decimal("1000"):
+        return JsonResponse(
+            {"error": "Minimum pocket money top-up is UGX 1,000."}, status=400
+        )
 
+    try:
         student = Student.objects.select_related("school").get(
             student_reg_no__iexact=reg_no, is_active=True
         )
 
+        subaccount_id = (student.school.subaccount_id or "").strip()
+        if not subaccount_id:
+            return JsonResponse(
+                {"error": "This school is not yet accepting online pocket money."},
+                status=400,
+            )
+
         payer_phone = normalize_ug_phone(raw_phone)
         platform_fee = Decimal("500.00")
-        total_charge = amount + platform_fee
-
         momo_ref_id = uuid.uuid4()
+
         topup = WalletTopUp.objects.create(
             student=student,
             momo_reference_id=momo_ref_id,
@@ -199,192 +376,165 @@ def initiate_parent_topup(request):
             status="PENDING",
         )
 
-        # ------------------------------------------------------------------
-        # ROUTE 1: Flutterwave Direct-to-School Split Payment (Recommended)
-        # ------------------------------------------------------------------
-        if student.school.subaccount_id:
-            flw_res = initiate_ug_mobile_money_split(
-                tx_ref=str(momo_ref_id),
-                payer_phone=payer_phone,
-                student_amount=int(amount),
-                platform_fee=int(platform_fee),
-                school_subaccount_id=student.school.subaccount_id,
-                student_name=student.full_name,
-            )
+        flw_res = initiate_ug_mobile_money_split(
+            tx_ref=str(momo_ref_id),
+            payer_phone=payer_phone,
+            student_amount=int(amount),
+            platform_fee=int(platform_fee),
+            school_subaccount_id=subaccount_id,
+            student_name=student.full_name,
+        )
 
-            if flw_res.get("status") == "success":
-                redirect_url = (
-                    flw_res.get("meta", {})
-                    .get("authorization", {})
-                    .get("redirect")
-                )
-                return JsonResponse(
-                    {
-                        "status": "PROMPT_SENT",
-                        "message": f"Click the authorization button below to complete your UGX {int(amount):,} top-up for {student.school.name} (+UGX {int(platform_fee)} fee).",
-                        "redirect_url": redirect_url,
-                        "reference_id": str(momo_ref_id),
-                        "student_name": student.full_name,
-                        "school": student.school.name,
-                    },
-                    status=202,
-                )
-            else:
-                topup.status = "FAILED"
-                topup.save(update_fields=["status"])
-                return JsonResponse(
-                    {"error": flw_res.get("message", "Flutterwave gateway rejected request.")},
-                    status=502,
-                )
-
-        # ------------------------------------------------------------------
-        # ROUTE 2: Fallback Direct MTN / Airtel API (If no Subaccount ID set)
-        # ------------------------------------------------------------------
-        is_airtel = payer_phone.startswith(("25670", "25675", "25674"))
-        if is_airtel:
-            prompt_sent = send_airtel_ussd_push(
-                reference_id=str(momo_ref_id),
-                payer_phone=payer_phone,
-                total_amount=str(int(total_charge)),
-                student_reg_no=student.student_reg_no,
+        if flw_res.get("status") == "success":
+            redirect_url = (
+                flw_res.get("meta", {})
+                .get("authorization", {})
+                .get("redirect")
             )
-            gateway_msg = "Airtel Money gateway rejected the request."
-        else:
-            status_code, mtn_response = send_request_to_pay(
-                reference_id=str(momo_ref_id),
-                payer_phone=payer_phone,
-                total_amount=str(int(total_charge)),
-                external_id=str(momo_ref_id),
-                student_name=student.full_name,
-            )
-            prompt_sent = status_code == 202
-            gateway_msg = f"MTN Sandbox returned {status_code}: {mtn_response}"
-
-        if prompt_sent:
             return JsonResponse(
                 {
                     "status": "PROMPT_SENT",
-                    "message": f"Please enter your Mobile Money PIN on {payer_phone} to approve UGX {int(total_charge):,}.",
+                    "message": (
+                        f"Click the authorization button below to complete your "
+                        f"UGX {int(amount):,} top-up for {student.school.name} "
+                        f"(+UGX {int(platform_fee)} fee)."
+                    ),
+                    "redirect_url": redirect_url,
                     "reference_id": str(momo_ref_id),
                     "student_name": student.full_name,
                     "school": student.school.name,
                 },
                 status=202,
             )
-        else:
-            topup.status = "FAILED"
-            topup.save(update_fields=["status"])
-            return JsonResponse({"error": gateway_msg}, status=502)
+
+        topup.status = "FAILED"
+        topup.save(update_fields=["status"])
+        logger.warning("Flutterwave rejected top-up %s: %s", momo_ref_id, flw_res)
+        return JsonResponse(
+            {
+                "error": (
+                    "Payment gateway could not start this transaction. "
+                    "Please verify your phone number and try again."
+                )
+            },
+            status=502,
+        )
 
     except Student.DoesNotExist:
         return JsonResponse(
             {"error": "Student registration number not found."}, status=404
         )
-    except Exception as e:
-        return JsonResponse({"error": str(e)}, status=500)
+    except Exception:
+        logger.exception("Unexpected error in initiate_parent_topup for %s", reg_no)
+        return JsonResponse(
+            {"error": "Unable to start payment right now. Please try again."},
+            status=500,
+        )
 
 
-@csrf_exempt
 @require_POST
 def verify_parent_topup(request):
     """
-    Called when the parent clicks 'Verify & Credit Wallet' to verify
-    the transaction directly with Flutterwave and credit the student's wallet.
+    Called when the parent clicks 'Verify & Credit Wallet' (or during auto-poll)
+    to verify the transaction server-side with Flutterwave and credit the wallet.
     """
+    data = _parse_json_body(request)
+    if data is None:
+        return JsonResponse({"error": "Invalid request payload."}, status=400)
+
+    reference_id = str(data.get("reference_id", "")).strip()
+    if not reference_id:
+        return JsonResponse({"error": "Transaction reference is required."}, status=400)
+
     try:
-        data = json.loads(request.body)
-        reference_id = data.get("reference_id", "").strip()
+        outcome, topup, student = verify_and_credit_flw_topup(reference_id)
 
-        with transaction.atomic():
-            topup = WalletTopUp.objects.select_for_update().get(
-                momo_reference_id=reference_id
-            )
-
-            if topup.status == "SUCCESSFUL":
-                student = topup.student
-                return JsonResponse(
-                    {
-                        "status": "SUCCESSFUL",
-                        "message": f"Confirmed! UGX {int(topup.amount):,} credited to {student.full_name}.",
-                        "new_balance": str(student.wallet_balance),
-                    },
-                    status=200,
-                )
-
-            flw_check = verify_flw_transaction_by_ref(str(topup.momo_reference_id))
-            tx_data = flw_check.get("data") or {}
-
-            if (
-                flw_check.get("status") == "success"
-                and tx_data.get("status") == "successful"
-                and Decimal(str(tx_data.get("amount", 0))) >= topup.amount
-            ):
-                topup.status = "SUCCESSFUL"
-                topup.save(update_fields=["status"])
-
-                student = Student.objects.select_for_update().get(id=topup.student_id)
-                student.wallet_balance += topup.amount
-                student.save(update_fields=["wallet_balance"])
-
-                send_topup_receipt_sms(
-                    parent_phone=student.parent_phone,
-                    student_name=student.full_name,
-                    amount_credited=str(topup.amount),
-                    new_balance=str(student.wallet_balance),
-                )
-
-                return JsonResponse(
-                    {
-                        "status": "SUCCESSFUL",
-                        "message": f"Payment Verified! UGX {int(topup.amount):,} added to {student.full_name}'s wallet.",
-                        "new_balance": str(student.wallet_balance),
-                    },
-                    status=200,
-                )
-
+        if outcome == "ALREADY_PROCESSED":
             return JsonResponse(
                 {
-                    "status": "PENDING",
-                    "message": "Payment is still awaiting PIN/OTP approval on Flutterwave.",
+                    "status": "SUCCESSFUL",
+                    "message": (
+                        f"Confirmed! UGX {int(topup.amount):,} credited to "
+                        f"{student.full_name}."
+                    ),
+                    "new_balance": str(student.wallet_balance),
                 },
-                status=202,
+                status=200,
             )
 
-    except WalletTopUp.DoesNotExist:
+        if outcome == "CREDITED":
+            return JsonResponse(
+                {
+                    "status": "SUCCESSFUL",
+                    "message": (
+                        f"Payment Verified! UGX {int(topup.amount):,} added to "
+                        f"{student.full_name}'s wallet."
+                    ),
+                    "new_balance": str(student.wallet_balance),
+                },
+                status=200,
+            )
+
+        if outcome in ("FAILED", "NOT_PENDING"):
+            return JsonResponse(
+                {
+                    "status": "FAILED",
+                    "error": "Payment was not completed on Mobile Money.",
+                },
+                status=400,
+            )
+
+        return JsonResponse(
+            {
+                "status": "PENDING",
+                "message": "Payment is still awaiting PIN/OTP approval on Flutterwave.",
+            },
+            status=202,
+        )
+
+    except (WalletTopUp.DoesNotExist, ValidationError, ValueError):
         return JsonResponse({"error": "Transaction reference not found."}, status=404)
-    except Exception as e:
-        return JsonResponse({"error": str(e)}, status=500)
+    except Exception:
+        logger.exception("Unexpected error verifying top-up %s", reference_id)
+        return JsonResponse(
+            {"error": "Unable to verify payment right now. Please try again."},
+            status=500,
+        )
 
 
-@csrf_exempt
+@login_required(login_url="/admin/login/")
 @require_POST
 def check_student_balance(request):
     """
-    Allows a student at the canteen counter to scan their CanteenPay card
-    and enter their 4-digit PIN to check their balance and daily limit.
+    Allows an authenticated canteen attendant to check a student's balance
+    and remaining daily limit after the student enters their 4-digit PIN.
     """
+    data = _parse_json_body(request)
+    if data is None:
+        return JsonResponse({"error": "Invalid request payload."}, status=400)
+
+    reg_no = str(data.get("student_reg_no", "")).strip()
+    raw_pin = str(data.get("pin", "")).strip()
+    if not reg_no:
+        return JsonResponse({"error": "CanteenPay code is required."}, status=400)
+
     try:
-        data = json.loads(request.body)
-        reg_no = data.get("student_reg_no", "").strip()
-        raw_pin = str(data.get("pin", "")).strip()
+        with transaction.atomic():
+            student = (
+                Student.objects.select_for_update()
+                .select_related("school")
+                .get(student_reg_no__iexact=reg_no, is_active=True)
+            )
 
-        student = Student.objects.select_related("school").get(
-            student_reg_no__iexact=reg_no, is_active=True
-        )
+            pin_error = _verify_pin_or_lockout(student, raw_pin)
+            if pin_error is not None:
+                return pin_error
 
-        if not student.verify_pin(raw_pin):
-            return JsonResponse({"error": "Incorrect 4-digit PIN."}, status=401)
-
-        today = timezone.now().date()
-        spent_today = (
-            CanteenOrder.objects.filter(
-                student=student, created_at__date=today
-            ).aggregate(total=Sum("amount"))["total"]
-            or Decimal("0.00")
-        )
-        remaining_daily = max(
-            student.school.daily_spend_limit - spent_today, Decimal("0.00")
-        )
+            today = timezone.now().date()
+            spent_today = _student_net_spent_today(student, today)
+            remaining_daily = max(
+                student.school.daily_spend_limit - spent_today, Decimal("0.00")
+            )
 
         return JsonResponse(
             {
@@ -399,15 +549,21 @@ def check_student_balance(request):
 
     except Student.DoesNotExist:
         return JsonResponse({"error": "Student ID not found or inactive."}, status=404)
-    except Exception as e:
-        return JsonResponse({"error": str(e)}, status=500)
+    except Exception:
+        logger.exception("Unexpected error in check_student_balance for %s", reg_no)
+        return JsonResponse(
+            {"error": "Unable to check balance right now. Please try again."},
+            status=500,
+        )
 
 
+@ensure_csrf_cookie
 @never_cache
 def parent_topup_page(request):
     return render(request, "wallet/parent_topup.html")
 
 
+@ensure_csrf_cookie
 @never_cache
 @login_required(login_url="/admin/login/")
 def canteen_pos_page(request):
@@ -499,11 +655,9 @@ def lookup_student(request):
         )
         return JsonResponse(
             {
-                "student_reg_no": student.student_reg_no,
                 "full_name": student.full_name,
                 "class_stream": student.class_stream,
                 "school": student.school.name,
-                "wallet_balance": str(student.wallet_balance),
             },
             status=200,
         )
@@ -517,13 +671,15 @@ def airtel_callback_webhook(request):
     """
     Callback endpoint hit by Airtel Money when a parent completes or cancels a top-up.
     """
-    try:
-        payload = json.loads(request.body)
-        print("Airtel Callback Payload:", payload)
-        transaction_data = payload.get("transaction", {})
-        reference_id = transaction_data.get("id")
-        airtel_status = transaction_data.get("status")  # "TS" = success, "TF" = failed
+    payload = _parse_json_body(request)
+    if payload is None:
+        return JsonResponse({"error": "Invalid JSON payload"}, status=400)
 
+    transaction_data = payload.get("transaction", {})
+    reference_id = transaction_data.get("id")
+    airtel_status = transaction_data.get("status")
+
+    try:
         with transaction.atomic():
             topup = WalletTopUp.objects.select_for_update().get(
                 momo_reference_id=reference_id
@@ -540,11 +696,19 @@ def airtel_callback_webhook(request):
                 student.wallet_balance += topup.amount
                 student.save(update_fields=["wallet_balance"])
 
-                send_topup_receipt_sms(
-                    parent_phone=student.parent_phone,
-                    student_name=student.full_name,
-                    amount_credited=str(topup.amount),
-                    new_balance=str(student.wallet_balance),
+                short_ref = str(topup.momo_reference_id)[:8].upper()
+                parent_phone = student.parent_phone
+                student_name = student.full_name
+                amount_str = str(topup.amount)
+                new_balance_str = str(student.wallet_balance)
+                transaction.on_commit(
+                    lambda: send_topup_receipt_sms(
+                        parent_phone=parent_phone,
+                        student_name=student_name,
+                        amount_credited=amount_str,
+                        new_balance=new_balance_str,
+                        tx_ref=short_ref,
+                    )
                 )
             else:
                 topup.status = "FAILED"
@@ -552,19 +716,66 @@ def airtel_callback_webhook(request):
 
         return JsonResponse({"message": "Callback processed"}, status=200)
 
-    except WalletTopUp.DoesNotExist:
+    except (WalletTopUp.DoesNotExist, ValidationError, ValueError):
         return JsonResponse({"error": "TopUp reference not found"}, status=404)
 
 
+@staff_member_required(login_url="/admin/login/")
 def bursar_daily_report(request):
     """
-    Displays today's canteen sales, parent top-ups, and net school settlement.
+    Displays today's online top-ups, bursar desk cash top-ups, and canteen sales,
+    and processes audited physical cash-in deposits from the bursar desk.
     """
-    selected_date_str = request.GET.get("date")
+    selected_date_str = request.GET.get("date") or request.POST.get("report_date")
     if selected_date_str:
-        report_date = timezone.datetime.strptime(selected_date_str, "%Y-%m-%d").date()
+        try:
+            report_date = timezone.datetime.strptime(
+                selected_date_str, "%Y-%m-%d"
+            ).date()
+        except ValueError:
+            report_date = timezone.now().date()
     else:
         report_date = timezone.now().date()
+
+    if request.method == "POST":
+        reg_no = (request.POST.get("student_reg_no") or "").strip()
+        receipt_note = (request.POST.get("receipt_note") or "").strip()[:255]
+        raw_amount = (request.POST.get("amount") or "").strip()
+
+        try:
+            amount = Decimal(raw_amount)
+        except (InvalidOperation, ValueError):
+            amount = Decimal("0")
+
+        if not reg_no or amount <= 0:
+            messages.error(
+                request, "Enter a valid CanteenPay code and a cash amount above 0."
+            )
+            return redirect(f"{request.path}?date={report_date:%Y-%m-%d}")
+
+        student = Student.objects.filter(
+            student_reg_no__iexact=reg_no, is_active=True
+        ).first()
+        if student is None:
+            messages.error(request, f"Active student '{reg_no}' was not found.")
+            return redirect(f"{request.path}?date={report_date:%Y-%m-%d}")
+
+        cash_topup = BursarCashTopUp.objects.create(
+            student=student,
+            amount=amount,
+            receipt_note=receipt_note,
+            received_by=request.user,
+        )
+        student.refresh_from_db()
+        messages.success(
+            request,
+            (
+                f"Cash top-up recorded: UGX {int(cash_topup.amount):,} credited to "
+                f"{student.full_name} ({student.student_reg_no}). "
+                f"New Balance: UGX {int(student.wallet_balance):,}."
+            ),
+        )
+        return redirect(f"{request.path}?date={report_date:%Y-%m-%d}")
 
     schools_data = []
     for school in School.objects.all():
@@ -574,6 +785,14 @@ def bursar_daily_report(request):
         canteen_summary = orders_qs.aggregate(
             total_sales=Sum("amount"), order_count=Count("id")
         )
+        refund_total = (
+            CanteenRefund.objects.filter(
+                order__student__school=school, order__created_at__date=report_date
+            ).aggregate(total=Sum("amount"))["total"]
+            or Decimal("0.00")
+        )
+        gross_sales = canteen_summary["total_sales"] or Decimal("0.00")
+        net_sales = max(gross_sales - refund_total, Decimal("0.00"))
 
         topups_qs = WalletTopUp.objects.filter(
             student__school=school, status="SUCCESSFUL", created_at__date=report_date
@@ -584,21 +803,41 @@ def bursar_daily_report(request):
             topup_count=Count("id"),
         )
 
+        cash_qs = BursarCashTopUp.objects.filter(
+            student__school=school, created_at__date=report_date
+        )
+        cash_summary = cash_qs.aggregate(
+            total_cash=Sum("amount"), cash_count=Count("id")
+        )
+
         schools_data.append(
             {
                 "school_name": school.name,
-                "canteen_sales": canteen_summary["total_sales"] or 0,
+                "online_topups": topup_summary["total_topups"] or 0,
+                "online_topup_count": topup_summary["topup_count"] or 0,
+                "cash_topups": cash_summary["total_cash"] or 0,
+                "cash_topup_count": cash_summary["cash_count"] or 0,
+                "canteen_sales": net_sales,
                 "order_count": canteen_summary["order_count"] or 0,
-                "parent_topups": topup_summary["total_topups"] or 0,
-                "topup_count": topup_summary["topup_count"] or 0,
+                "refund_total": refund_total,
                 "platform_revenue": topup_summary["total_fees"] or 0,
             }
         )
 
+    recent_cash_topups = (
+        BursarCashTopUp.objects.filter(created_at__date=report_date)
+        .select_related("student", "student__school", "received_by")
+        .order_by("-created_at")[:50]
+    )
+
     return render(
         request,
         "wallet/bursar_report.html",
-        {"report_date": report_date, "schools_data": schools_data},
+        {
+            "report_date": report_date,
+            "schools_data": schools_data,
+            "recent_cash_topups": recent_cash_topups,
+        },
     )
 
 
@@ -614,7 +853,6 @@ def daily_topup_noticeboard(request):
     else:
         report_date = timezone.now().date()
 
-    # Fetch distinct students who received a SUCCESSFUL top-up on report_date
     credited_students = (
         Student.objects.filter(
             topups__status="SUCCESSFUL",
@@ -640,41 +878,36 @@ def daily_topup_noticeboard(request):
 @require_POST
 def aggregator_callback_webhook(request):
     """
-    Receives payment confirmation from Flutterwave after split settlement
-    to the school's bank account is triggered.
+    Receives payment notifications from Flutterwave and verifies the transaction
+    server-side before crediting the student's wallet.
     """
-    signature = request.headers.get("verif-hash")
-    if not signature or signature != settings.FLW_WEBHOOK_HASH:
+    signature = request.headers.get("verif-hash") or ""
+    expected_hash = settings.FLW_WEBHOOK_HASH or ""
+    if not signature or not expected_hash or not hmac.compare_digest(
+        signature, expected_hash
+    ):
         return JsonResponse({"error": "Unauthorized webhook signature"}, status=401)
 
-    payload = json.loads(request.body)
-    event_data = payload.get("data", {})
+    payload = _parse_json_body(request)
+    if payload is None:
+        return JsonResponse({"error": "Invalid JSON payload"}, status=400)
 
-    if payload.get("event") == "charge.completed" and event_data.get("status") == "successful":
+    event_data = payload.get("data") or {}
+
+    if (
+        payload.get("event") == "charge.completed"
+        and event_data.get("status") == "successful"
+    ):
         reference_id = event_data.get("tx_ref")
+        if not reference_id:
+            return JsonResponse({"error": "Missing transaction reference"}, status=400)
 
         try:
-            with transaction.atomic():
-                topup = WalletTopUp.objects.select_for_update().get(
-                    momo_reference_id=reference_id
-                )
-                if topup.status != "PENDING":
-                    return JsonResponse({"message": "Already processed"}, status=200)
-
-                topup.status = "SUCCESSFUL"
-                topup.save(update_fields=["status"])
-
-                student = Student.objects.select_for_update().get(id=topup.student_id)
-                student.wallet_balance += topup.amount
-                student.save(update_fields=["wallet_balance"])
-
-                send_topup_receipt_sms(
-                    parent_phone=student.parent_phone,
-                    student_name=student.full_name,
-                    amount_credited=str(topup.amount),
-                    new_balance=str(student.wallet_balance),
-                )
-        except WalletTopUp.DoesNotExist:
+            outcome, _, _ = verify_and_credit_flw_topup(reference_id)
+            if outcome in ("ALREADY_PROCESSED", "NOT_PENDING"):
+                return JsonResponse({"message": "Already processed"}, status=200)
+            return JsonResponse({"status": "ok"}, status=200)
+        except (WalletTopUp.DoesNotExist, ValidationError, ValueError):
             return JsonResponse({"error": "TopUp reference not found"}, status=404)
 
     return JsonResponse({"status": "ok"}, status=200)

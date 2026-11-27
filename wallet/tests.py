@@ -321,10 +321,16 @@ class CanteenPayProductionTests(TestCase):
     def test_public_lookup_strips_balance_and_balance_requires_auth(self):
         lookup = self.client.get("/api/student/lookup/?reg_no=STD-2026-001")
         self.assertEqual(lookup.status_code, 200)
+        lookup_data = lookup.json()
         self.assertEqual(
-            set(lookup.json().keys()),
+            set(lookup_data.keys()),
             {"full_name", "class_stream", "school"},
         )
+        self.assertEqual(lookup_data["class_stream"], "S.2 East")
+
+        parent_page = self.client.get("/").content.decode()
+        self.assertIn("data.class_stream", parent_page)
+        self.assertIn("${data.full_name}${cls}", parent_page)
 
         unauth_bal = self.client.post(
             "/api/student/balance/",

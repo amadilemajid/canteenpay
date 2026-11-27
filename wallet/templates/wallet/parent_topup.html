@@ -108,9 +108,10 @@ async function verifyStudent() {
         const data = await res.json();
         badge.style.display = "block";
         if (res.ok) {
+            const cls = data.class_stream ? ` (${data.class_stream})` : "";
             badge.style.background = "#ecfdf5";
             badge.style.color = "#065f46";
-            badge.innerText = `✓ ${data.full_name} — ${data.school}`;
+            badge.innerText = `✓ ${data.full_name}${cls} — ${data.school}`;
         } else {
             badge.style.background = "#fef2f2";
             badge.style.color = "#991b1b";

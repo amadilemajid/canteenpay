@@ -22,44 +22,20 @@
             gap: 10px;
             flex-wrap: wrap;
         }
-        .staff-bar .attendant {
-            font-size: 0.85rem;
-            color: #a7f3d0;
-            font-weight: 700;
-            white-space: nowrap;
-        }
+        .staff-bar .attendant { font-size: 0.85rem; color: #a7f3d0; font-weight: 700; white-space: nowrap; }
         .staff-bar .attendant span { color: #6ee7b7; }
-        .staff-bar nav {
-            display: flex;
-            gap: 6px;
-            flex-wrap: wrap;
-            align-items: center;
-        }
+        .staff-bar nav { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
         .staff-bar nav a {
-            font-size: 0.78rem;
-            color: #93c5fd;
-            text-decoration: none;
-            padding: 4px 9px;
-            border: 1px solid #1e40af;
-            border-radius: 5px;
-            background: #1e3a5f;
-            white-space: nowrap;
-            transition: background 0.15s;
+            font-size: 0.78rem; color: #93c5fd; text-decoration: none;
+            padding: 4px 9px; border: 1px solid #1e40af; border-radius: 5px;
+            background: #1e3a5f; white-space: nowrap; transition: background 0.15s;
         }
         .staff-bar nav a:hover { background: #1d4ed8; color: #fff; }
         .staff-bar .logout-form button {
-            font-size: 0.78rem;
-            color: #fca5a5;
-            background: #3f1515;
-            border: 1px solid #7f1d1d;
-            border-radius: 5px;
-            padding: 4px 10px;
-            cursor: pointer;
-            font-weight: 700;
-            width: auto;
-            margin: 0;
-            white-space: nowrap;
-            transition: background 0.15s;
+            font-size: 0.78rem; color: #fca5a5; background: #3f1515;
+            border: 1px solid #7f1d1d; border-radius: 5px; padding: 4px 10px;
+            cursor: pointer; font-weight: 700; width: auto; margin: 0;
+            white-space: nowrap; transition: background 0.15s;
         }
         .staff-bar .logout-form button:hover { background: #7f1d1d; color: #fff; }
 
@@ -67,8 +43,23 @@
         .container { max-width: 460px; margin: 16px auto; background: #1f2937; padding: 20px; border-radius: 12px; }
         h2 { margin-top: 0; text-align: center; color: #10b981; }
 
-        /* ── QR reader ── */
-        #reader { width: 100%; border-radius: 8px; overflow: hidden; background: #000; }
+        /* ── Camera preview ── */
+        #reader {
+            width: 100%; border-radius: 8px; overflow: hidden;
+            background: #000; min-height: 56px;   /* collapses to status bar when no preview */
+        }
+        /* Hide html5-qrcode internal header/footer chrome we don't need */
+        #reader img, #reader select { display: none !important; }
+
+        /* ── Camera status bar ── */
+        #cameraStatus {
+            margin-top: 6px; padding: 7px 10px; border-radius: 6px;
+            font-size: 0.82rem; font-weight: 600; text-align: center;
+            background: #374151; color: #9ca3af;
+        }
+        #cameraStatus.ready  { background: #064e3b; color: #6ee7b7; }
+        #cameraStatus.locked { background: #78350f; color: #fde68a; }
+        #cameraStatus.error  { background: #7f1d1d; color: #fca5a5; }
 
         /* ── Form controls ── */
         label { display: block; margin: 12px 0 4px; font-size: 0.9rem; color: #d1d5db; }
@@ -81,15 +72,7 @@
         button:disabled { opacity: 0.6; cursor: not-allowed; }
 
         /* ── Clear / Next Student button ── */
-        #clearBtn {
-            display: none;
-            background: #374151;
-            color: #d1d5db;
-            border: 1px solid #4b5563;
-            font-size: 0.95rem;
-            padding: 11px 14px;
-            margin-top: 10px;
-        }
+        #clearBtn { display: none; background: #374151; color: #d1d5db; border: 1px solid #4b5563; font-size: 0.95rem; padding: 11px 14px; margin-top: 10px; }
         #clearBtn:hover:not(:disabled) { background: #4b5563; color: #fff; }
 
         /* ── Balance button ── */
@@ -111,26 +94,18 @@
 
         /* ── Charge confirmation banner ── */
         .confirm-banner {
-            display: none;
-            margin-top: 14px;
-            padding: 14px 12px;
-            border-radius: 8px;
-            background: #fef3c7;
-            color: #92400e;
-            border: 2px solid #f59e0b;
-            font-size: 1.05rem;
-            font-weight: 800;
-            text-align: center;
+            display: none; margin-top: 14px; padding: 14px 12px;
+            border-radius: 8px; background: #fef3c7; color: #92400e;
+            border: 2px solid #f59e0b; font-size: 1.05rem;
+            font-weight: 800; text-align: center;
         }
     </style>
 </head>
 <body>
 
-<!-- ── Staff header bar ─────────────────────────────────────────────── -->
+<!-- ── Staff header bar ─────────────────────────────────────────────────── -->
 <div class="staff-bar">
-    <div class="attendant">
-        🧑‍💼 Attendant: <span>{{ request.user.username }}</span>
-    </div>
+    <div class="attendant">🧑‍💼 Attendant: <span>{{ request.user.username }}</span></div>
     <nav>
         <a href="{% url 'bursar_daily_report' %}">📊 Daily Report</a>
         <a href="{% url 'daily_topup_noticeboard' %}">📋 Top-Up Board</a>
@@ -142,23 +117,28 @@
     </form>
 </div>
 
-<!-- ── Main POS card ──────────────────────────────────────────────────── -->
+<!-- ── Main POS card ─────────────────────────────────────────────────────── -->
 <div class="container">
     {% csrf_token %}
     <h2>Canteen QR Checkout</h2>
+
+    <!-- Camera preview — Html5Qrcode renders into this div -->
     <div id="reader"></div>
+    <div id="cameraStatus">🎥 Starting rear camera…</div>
 
     <label for="nameSearch">Search by student name</label>
     <input type="text" id="nameSearch" placeholder="Type a name, then tap Full Name — Class" autocomplete="off">
     <div id="searchResults" class="results"></div>
 
     <label for="scannedId">CanteenPay code (scan the card or type it)</label>
-    <input type="text" id="scannedId" placeholder="e.g. YMB-0042" autocomplete="off">
+    <input type="text" id="scannedId" placeholder="e.g. ARI-0042" autocomplete="off">
 
     <div id="studentInfo" class="info-card"></div>
 
     <label for="orderAmount">Purchase Amount (UGX)</label>
-    <input type="number" id="orderAmount" placeholder="e.g. 2500" min="100" step="100" autocomplete="off">
+    <!-- inputmode="numeric" opens the numeric keypad directly on Android -->
+    <input type="number" id="orderAmount" placeholder="e.g. 2500"
+           min="100" step="100" inputmode="numeric" pattern="[0-9]*" autocomplete="off">
 
     <label for="itemsNote">Items Bought (Optional)</label>
     <input type="text" id="itemsNote" placeholder="e.g. Chapati + Soda" autocomplete="off">
@@ -169,24 +149,19 @@
     <label for="studentPin">Student 4-Digit PIN</label>
     <!-- autocomplete="new-password" stops browsers prefilling saved account passwords -->
     <input type="password" id="studentPin" maxlength="4"
-           inputmode="numeric" placeholder="****"
-           autocomplete="new-password">
+           inputmode="numeric" placeholder="****" autocomplete="new-password">
 
     <button id="chargeBtn" type="button" onclick="processCheckout()">Charge Student Wallet</button>
-    <button id="balanceBtn" type="button" onclick="checkBalanceOnly()">
-        Check Balance Only (Requires PIN)
-    </button>
-
-    <!-- Clear / Next Student — appears after any completed transaction -->
-    <button id="clearBtn" type="button" onclick="resetForNextStudent()">
-        ✕ Clear / Next Student
-    </button>
+    <button id="balanceBtn" type="button" onclick="checkBalanceOnly()">Check Balance Only (Requires PIN)</button>
+    <button id="clearBtn"   type="button" onclick="resetForNextStudent()">✕ Clear / Next Student</button>
 
     <div id="alertBox" class="alert"></div>
 </div>
 
 <script>
-    /* ── CSRF helper ───────────────────────────────────────────────────── */
+    /* ═══════════════════════════════════════════════════════════════════════
+       CSRF helper
+    ═══════════════════════════════════════════════════════════════════════ */
     function getCookie(name) {
         let v = null;
         if (document.cookie) {
@@ -202,23 +177,125 @@
         return v || "";
     }
 
-    /* ── Idempotency key (new per transaction) ─────────────────────────── */
+    /* ═══════════════════════════════════════════════════════════════════════
+       Sensory feedback — beep + vibration
+       AudioContext requires a prior user gesture; the camera-start click
+       (or any tap on the page) is sufficient to unlock it.
+    ═══════════════════════════════════════════════════════════════════════ */
+    function playBeep(frequency = 1046, durationSec = 0.12, volume = 0.35) {
+        try {
+            const ctx  = new (window.AudioContext || window.webkitAudioContext)();
+            const osc  = ctx.createOscillator();
+            const gain = ctx.createGain();
+            osc.connect(gain);
+            gain.connect(ctx.destination);
+            osc.type = "square";
+            osc.frequency.value = frequency;
+            gain.gain.setValueAtTime(volume, ctx.currentTime);
+            gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + durationSec);
+            osc.start(ctx.currentTime);
+            osc.stop(ctx.currentTime + durationSec);
+        } catch (_) { /* silent fail on browsers that block audio */ }
+    }
+
+    function vibrate(ms = 80) {
+        try { navigator.vibrate?.(ms); } catch (_) {}
+    }
+
+    /* ═══════════════════════════════════════════════════════════════════════
+       QR Scanner — Html5Qrcode (direct API, NOT Html5QrcodeScanner widget)
+       This auto-starts the rear camera on page load with no extra button tap.
+    ═══════════════════════════════════════════════════════════════════════ */
+    const qrScanner = new Html5Qrcode("reader");
+    const cameraStatus = document.getElementById("cameraStatus");
+
+    // Guard: ignore re-reads while a scan is "locked" (3-second cooldown)
+    let scanLocked = false;
+
+    function onScanSuccess(decodedText) {
+        if (scanLocked) return;          // drop all repeat reads of same card
+        scanLocked = true;
+
+        // Fill the CanteenPay code field and trigger student lookup
+        scannedId.value = decodedText.trim();
+        resetCheckoutKey();
+        fetchStudentInfo();
+
+        // ── Sensory confirmation ─────────────────────────────────────────
+        playBeep(1046, 0.12, 0.35);      // crisp single beep (C6)
+        vibrate(80);                     // 80 ms pulse on Android
+
+        // ── Pause scanner for 3 s — same card cannot re-fire ────────────
+        cameraStatus.className = "locked";
+        cameraStatus.textContent = "🔒 Scan locked for 3 s — enter amount & PIN";
+        qrScanner.pause(true);           // true = pause video track too (saves CPU)
+        setTimeout(() => {
+            if (!scanLocked) return;     // reset() was called first — don't resume
+            qrScanner.resume();
+            scanLocked = false;
+            cameraStatus.className = "ready";
+            cameraStatus.textContent = "✅ Ready — hold card in front of camera";
+        }, 3000);
+    }
+
+    function onScanError() { /* frame-miss noise — intentionally silent */ }
+
+    function startRearCamera() {
+        Html5Qrcode.getCameras()
+            .then(cameras => {
+                if (!cameras || cameras.length === 0) {
+                    setCameraError("No camera found on this device.");
+                    return;
+                }
+                // Prefer any camera whose label contains "back / rear / environment"
+                const rear = cameras.find(c =>
+                    /back|rear|environment/i.test(c.label)
+                ) || cameras[cameras.length - 1]; // fallback: last camera is usually rear
+
+                return qrScanner.start(
+                    rear.id,
+                    { fps: 10, qrbox: { width: 240, height: 240 } },
+                    onScanSuccess,
+                    onScanError
+                );
+            })
+            .then(() => {
+                cameraStatus.className = "ready";
+                cameraStatus.textContent = "✅ Ready — hold card in front of camera";
+                // Camera is live — unlock AudioContext by touching it once silently
+                try {
+                    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+                    ctx.resume();        // warms up audio so first beep fires instantly
+                } catch (_) {}
+            })
+            .catch(err => {
+                const msg = String(err).includes("Permission")
+                    ? "Camera permission denied — allow camera in browser settings."
+                    : `Camera error: ${String(err).slice(0, 80)}`;
+                setCameraError(msg);
+            });
+    }
+
+    function setCameraError(msg) {
+        cameraStatus.className = "error";
+        cameraStatus.textContent = "❌ " + msg;
+    }
+
+    // Auto-start on page load — attendant just opens /pos/ and camera is ready
+    document.addEventListener("DOMContentLoaded", startRearCamera);
+
+    /* ═══════════════════════════════════════════════════════════════════════
+       Idempotency key — fresh UUID per transaction
+    ═══════════════════════════════════════════════════════════════════════ */
     function generateIdempotencyKey() {
         return window.crypto?.randomUUID?.() || `pos-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
     }
     let pendingIdempotencyKey = generateIdempotencyKey();
     function resetCheckoutKey() { pendingIdempotencyKey = generateIdempotencyKey(); }
 
-    /* ── QR scanner ────────────────────────────────────────────────────── */
-    function onScanSuccess(decodedText) {
-        scannedId.value = decodedText.trim();
-        resetCheckoutKey();
-        fetchStudentInfo();
-    }
-    const html5QrcodeScanner = new Html5QrcodeScanner("reader", { fps: 10, qrbox: 220 });
-    html5QrcodeScanner.render(onScanSuccess);
-
-    /* ── DOM refs ──────────────────────────────────────────────────────── */
+    /* ═══════════════════════════════════════════════════════════════════════
+       DOM refs & state
+    ═══════════════════════════════════════════════════════════════════════ */
     const nameSearch          = document.getElementById("nameSearch");
     const searchResults       = document.getElementById("searchResults");
     const scannedId           = document.getElementById("scannedId");
@@ -227,13 +304,14 @@
     const alertBox            = document.getElementById("alertBox");
     const clearBtn            = document.getElementById("clearBtn");
 
-    /* ── State ─────────────────────────────────────────────────────────── */
     let selectedStudent = { name: "", classStream: "" };
 
-    /* ── Auto-focus CanteenPay code on load (USB/BT scanner ready) ─────── */
+    // Auto-focus code field on load for USB/Bluetooth scanner keyboards
     scannedId.focus();
 
-    /* ── Confirm-charge banner ─────────────────────────────────────────── */
+    /* ═══════════════════════════════════════════════════════════════════════
+       Confirm-charge banner
+    ═══════════════════════════════════════════════════════════════════════ */
     function updateConfirmChargeBanner() {
         const amountVal = Number(orderAmount.value);
         if (selectedStudent.name && amountVal > 0) {
@@ -247,21 +325,26 @@
         }
     }
 
-    /* ── Input listeners ───────────────────────────────────────────────── */
+    /* ═══════════════════════════════════════════════════════════════════════
+       Input listeners
+    ═══════════════════════════════════════════════════════════════════════ */
     scannedId.addEventListener("input", () => {
         resetCheckoutKey();
         selectedStudent = { name: "", classStream: "" };
         updateConfirmChargeBanner();
     });
     scannedId.addEventListener("change", fetchStudentInfo);
-    scannedId.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); fetchStudentInfo(); } });
-
+    scannedId.addEventListener("keydown", (e) => {
+        if (e.key === "Enter") { e.preventDefault(); fetchStudentInfo(); }
+    });
     orderAmount.addEventListener("input", () => {
         resetCheckoutKey();
         updateConfirmChargeBanner();
     });
 
-    /* ── Name search ───────────────────────────────────────────────────── */
+    /* ═══════════════════════════════════════════════════════════════════════
+       Name search
+    ═══════════════════════════════════════════════════════════════════════ */
     let searchTimer = null;
     nameSearch.addEventListener("input", () => {
         clearTimeout(searchTimer);
@@ -304,7 +387,9 @@
         document.getElementById("studentPin").focus();
     }
 
-    /* ── Student info banner ───────────────────────────────────────────── */
+    /* ═══════════════════════════════════════════════════════════════════════
+       Student info banner
+    ═══════════════════════════════════════════════════════════════════════ */
     function showStudentBanner(titleText, subtitleText, isError) {
         const infoDiv = document.getElementById("studentInfo");
         infoDiv.style.display = "block";
@@ -327,7 +412,11 @@
 
     async function fetchStudentInfo() {
         const regNo = scannedId.value.trim();
-        if (!regNo) { selectedStudent = { name: "", classStream: "" }; updateConfirmChargeBanner(); return; }
+        if (!regNo) {
+            selectedStudent = { name: "", classStream: "" };
+            updateConfirmChargeBanner();
+            return;
+        }
         const res  = await fetch(`/api/student/lookup/?reg_no=${encodeURIComponent(regNo)}`);
         const data = await res.json();
         if (res.ok) {
@@ -346,7 +435,10 @@
         }
     }
 
-    /* ── Reset / Next Student ──────────────────────────────────────────── */
+    /* ═══════════════════════════════════════════════════════════════════════
+       Reset / Next Student
+       Also resumes the scanner so it's immediately ready for the next card.
+    ═══════════════════════════════════════════════════════════════════════ */
     function resetForNextStudent() {
         scannedId.value = "";
         orderAmount.value = "";
@@ -360,10 +452,20 @@
         resetCheckoutKey();
         nameSearch.value = "";
         searchResults.innerHTML = "";
+
+        // Resume scanner if it was paused mid-cooldown
+        if (scanLocked) {
+            scanLocked = false;
+            try { qrScanner.resume(); } catch (_) {}
+        }
+        cameraStatus.className = "ready";
+        cameraStatus.textContent = "✅ Ready — hold card in front of camera";
         scannedId.focus();
     }
 
-    /* ── Balance check ─────────────────────────────────────────────────── */
+    /* ═══════════════════════════════════════════════════════════════════════
+       Balance check
+    ═══════════════════════════════════════════════════════════════════════ */
     async function checkBalanceOnly() {
         const balanceBtn = document.getElementById("balanceBtn");
         const payload = {
@@ -400,14 +502,16 @@
         }
     }
 
-    /* ── Checkout ──────────────────────────────────────────────────────── */
+    /* ═══════════════════════════════════════════════════════════════════════
+       Checkout
+    ═══════════════════════════════════════════════════════════════════════ */
     async function processCheckout() {
         const chargeBtn = document.getElementById("chargeBtn");
         const payload = {
-            student_reg_no: scannedId.value.trim(),
-            amount:         orderAmount.value,
-            items_note:     document.getElementById("itemsNote").value.trim(),
-            pin:            document.getElementById("studentPin").value.trim(),
+            student_reg_no:  scannedId.value.trim(),
+            amount:          orderAmount.value,
+            items_note:      document.getElementById("itemsNote").value.trim(),
+            pin:             document.getElementById("studentPin").value.trim(),
             idempotency_key: pendingIdempotencyKey
         };
         if (!payload.student_reg_no || !payload.amount || !payload.pin) {
@@ -424,13 +528,18 @@
             });
             const data = await res.json();
             if (res.ok) {
+                // Double beep = APPROVED (distinct from single scan beep)
+                playBeep(1319, 0.08, 0.3);  // E6
+                setTimeout(() => playBeep(1568, 0.1, 0.3), 110); // G6
+                vibrate([60, 40, 60]);
+
                 showAlert("ok", `✅ APPROVED!  New Balance: UGX ${Number(data.new_balance).toLocaleString()}`);
                 orderAmount.value = "";
                 document.getElementById("itemsNote").value = "";
                 document.getElementById("studentPin").value = "";
                 resetCheckoutKey();
                 updateConfirmChargeBanner();
-                fetchStudentInfo();          // refresh student info card with new balance hint
+                fetchStudentInfo();     // refresh student card to reflect new balance hint
                 clearBtn.style.display = "block";
             } else {
                 let errMsg = data.error || "Transaction Declined";
@@ -449,7 +558,9 @@
         }
     }
 
-    /* ── Alert helper ──────────────────────────────────────────────────── */
+    /* ═══════════════════════════════════════════════════════════════════════
+       Alert helper
+    ═══════════════════════════════════════════════════════════════════════ */
     function showAlert(type, msg) {
         alertBox.style.display = "block";
         alertBox.className = `alert ${type}`;

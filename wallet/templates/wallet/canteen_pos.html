@@ -240,40 +240,59 @@
 
     function onScanError() { /* frame-miss noise — intentionally silent */ }
 
-    function startRearCamera() {
-        Html5Qrcode.getCameras()
-            .then(cameras => {
-                if (!cameras || cameras.length === 0) {
-                    setCameraError("No camera found on this device.");
-                    return;
-                }
-                // Prefer any camera whose label contains "back / rear / environment"
-                const rear = cameras.find(c =>
-                    /back|rear|environment/i.test(c.label)
-                ) || cameras[cameras.length - 1]; // fallback: last camera is usually rear
+    function onCameraStarted() {
+        cameraStatus.className = "ready";
+        cameraStatus.textContent = "✅ Ready — hold card in front of camera";
+        // Warm up AudioContext so the first scan beep fires without delay
+        try {
+            const ctx = new (window.AudioContext || window.webkitAudioContext)();
+            ctx.resume();
+        } catch (_) {}
+    }
 
-                return qrScanner.start(
-                    rear.id,
-                    { fps: 10, qrbox: { width: 240, height: 240 } },
-                    onScanSuccess,
-                    onScanError
-                );
-            })
-            .then(() => {
-                cameraStatus.className = "ready";
-                cameraStatus.textContent = "✅ Ready — hold card in front of camera";
-                // Camera is live — unlock AudioContext by touching it once silently
-                try {
-                    const ctx = new (window.AudioContext || window.webkitAudioContext)();
-                    ctx.resume();        // warms up audio so first beep fires instantly
-                } catch (_) {}
-            })
-            .catch(err => {
-                const msg = String(err).includes("Permission")
-                    ? "Camera permission denied — allow camera in browser settings."
-                    : `Camera error: ${String(err).slice(0, 80)}`;
-                setCameraError(msg);
-            });
+    function startRearCamera() {
+        // Use facingMode:"environment" — the standard WebRTC constraint for the
+        // rear camera. More reliable than guessing from camera label strings,
+        // which vary across Android manufacturers.
+        qrScanner.start(
+            { facingMode: "environment" },
+            { fps: 10, qrbox: { width: 240, height: 240 } },
+            onScanSuccess,
+            onScanError
+        )
+        .then(onCameraStarted)
+        .catch(err => {
+            // facingMode:"environment" failed — fall back to enumerating cameras
+            // and picking the last one (usually rear on Android)
+            console.warn("facingMode:environment failed, trying camera enumeration:", err);
+            Html5Qrcode.getCameras()
+                .then(cameras => {
+                    if (!cameras || cameras.length === 0) {
+                        return Promise.reject(new Error("No camera found on this device."));
+                    }
+                    // Try label match first, then fall back to last camera
+                    const rear = cameras.find(c =>
+                        /back|rear|environment/i.test(c.label)
+                    ) || cameras[cameras.length - 1];
+
+                    return qrScanner.start(
+                        rear.id,
+                        { fps: 10, qrbox: { width: 240, height: 240 } },
+                        onScanSuccess,
+                        onScanError
+                    );
+                })
+                .then(onCameraStarted)
+                .catch(fallbackErr => {
+                    const errText = String(fallbackErr);
+                    const msg = errText.includes("Permission")
+                        ? "Camera permission denied — allow camera in browser settings."
+                        : errText.includes("No camera found")
+                            ? "No camera found on this device."
+                            : `Camera error: ${errText.slice(0, 80)}`;
+                    setCameraError(msg);
+                });
+        });
     }
 
     function setCameraError(msg) {

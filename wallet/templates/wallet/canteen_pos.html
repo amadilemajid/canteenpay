@@ -60,6 +60,12 @@
         #cameraStatus.ready  { background: #064e3b; color: #6ee7b7; }
         #cameraStatus.locked { background: #78350f; color: #fde68a; }
         #cameraStatus.error  { background: #7f1d1d; color: #fca5a5; }
+        #switchCameraBtn {
+            display: none; margin-top: 6px; padding: 8px 10px;
+            background: #374151; color: #e5e7eb; border: 1px solid #4b5563;
+            border-radius: 6px; font-size: 0.82rem; font-weight: 600;
+        }
+        #switchCameraBtn:hover:not(:disabled) { background: #4b5563; color: #fff; }
 
         /* ── Form controls ── */
         label { display: block; margin: 12px 0 4px; font-size: 0.9rem; color: #d1d5db; }
@@ -125,6 +131,7 @@
     <!-- Camera preview — Html5Qrcode renders into this div -->
     <div id="reader"></div>
     <div id="cameraStatus">🎥 Starting rear camera…</div>
+    <button id="switchCameraBtn" type="button" onclick="switchCamera()">🔄 Switch Camera</button>
 
     <label for="nameSearch">Search by student name</label>
     <input type="text" id="nameSearch" placeholder="Type a name, then tap Full Name — Class" autocomplete="off">
@@ -208,9 +215,32 @@
     ═══════════════════════════════════════════════════════════════════════ */
     const qrScanner = new Html5Qrcode("reader");
     const cameraStatus = document.getElementById("cameraStatus");
+    const switchCameraBtn = document.getElementById("switchCameraBtn");
+    const CAMERA_PREF_KEY = "canteenpay_preferred_camera_id";
+    const SCAN_CONFIG = { fps: 10, qrbox: { width: 240, height: 240 } };
+
+    let availableCameras = [];
+    let currentCameraId = null;
 
     // Guard: ignore re-reads while a scan is "locked" (3-second cooldown)
     let scanLocked = false;
+
+    function getActiveVideoTrack() {
+        const video = document.querySelector("#reader video");
+        const stream = video && video.srcObject;
+        const tracks = stream && typeof stream.getVideoTracks === "function"
+            ? stream.getVideoTracks()
+            : [];
+        return tracks[0] || null;
+    }
+
+    function readyStatusText() {
+        const track = getActiveVideoTrack();
+        const label = (track && track.label ? track.label : "").trim();
+        return label
+            ? `✅ Ready (${label}) — hold card in front of camera`
+            : "✅ Ready — hold card in front of camera";
+    }
 
     function onScanSuccess(decodedText) {
         if (scanLocked) return;          // drop all repeat reads of same card
@@ -234,15 +264,40 @@
             qrScanner.resume();
             scanLocked = false;
             cameraStatus.className = "ready";
-            cameraStatus.textContent = "✅ Ready — hold card in front of camera";
+            cameraStatus.textContent = readyStatusText();
         }, 3000);
     }
 
     function onScanError() { /* frame-miss noise — intentionally silent */ }
 
-    function onCameraStarted() {
+    async function refreshCameraList() {
+        try {
+            availableCameras = await Html5Qrcode.getCameras();
+        } catch (_) {
+            availableCameras = [];
+        }
+        const track = getActiveVideoTrack();
+        const settings = track && typeof track.getSettings === "function" ? track.getSettings() : {};
+        if (settings.deviceId) {
+            currentCameraId = settings.deviceId;
+        }
+        if (availableCameras.length > 1) {
+            switchCameraBtn.style.display = "block";
+            const idx = availableCameras.findIndex(c => c.id === currentCameraId);
+            const labelNum = idx >= 0 ? ` (${idx + 1}/${availableCameras.length})` : "";
+            switchCameraBtn.textContent = `🔄 Switch Camera${labelNum}`;
+        } else {
+            switchCameraBtn.style.display = "none";
+        }
+    }
+
+    async function onCameraStarted(explicitCameraId = null) {
+        if (explicitCameraId) {
+            currentCameraId = explicitCameraId;
+        }
+        await refreshCameraList();
         cameraStatus.className = "ready";
-        cameraStatus.textContent = "✅ Ready — hold card in front of camera";
+        cameraStatus.textContent = readyStatusText();
         // Warm up AudioContext so the first scan beep fires without delay
         try {
             const ctx = new (window.AudioContext || window.webkitAudioContext)();
@@ -250,49 +305,79 @@
         } catch (_) {}
     }
 
-    function startRearCamera() {
-        // Use facingMode:"environment" — the standard WebRTC constraint for the
-        // rear camera. More reliable than guessing from camera label strings,
-        // which vary across Android manufacturers.
-        qrScanner.start(
-            { facingMode: "environment" },
-            { fps: 10, qrbox: { width: 240, height: 240 } },
-            onScanSuccess,
-            onScanError
-        )
-        .then(onCameraStarted)
-        .catch(err => {
-            // facingMode:"environment" failed — fall back to enumerating cameras
-            // and picking the last one (usually rear on Android)
-            console.warn("facingMode:environment failed, trying camera enumeration:", err);
-            Html5Qrcode.getCameras()
-                .then(cameras => {
-                    if (!cameras || cameras.length === 0) {
-                        return Promise.reject(new Error("No camera found on this device."));
-                    }
-                    // Try label match first, then fall back to last camera
-                    const rear = cameras.find(c =>
-                        /back|rear|environment/i.test(c.label)
-                    ) || cameras[cameras.length - 1];
+    function pickBestRearCamera(cameras) {
+        const isFront = c => /front|user|selfie|facetime/i.test(c.label || "");
+        const isRear  = c => /back|rear|environment/i.test(c.label || "");
+        return (
+            cameras.find(c => isRear(c) && !isFront(c))
+            || cameras.find(c => !isFront(c))
+            || cameras[0]
+        );
+    }
 
-                    return qrScanner.start(
-                        rear.id,
-                        { fps: 10, qrbox: { width: 240, height: 240 } },
-                        onScanSuccess,
-                        onScanError
-                    );
-                })
-                .then(onCameraStarted)
-                .catch(fallbackErr => {
-                    const errText = String(fallbackErr);
-                    const msg = errText.includes("Permission")
-                        ? "Camera permission denied — allow camera in browser settings."
-                        : errText.includes("No camera found")
-                            ? "No camera found on this device."
-                            : `Camera error: ${errText.slice(0, 80)}`;
-                    setCameraError(msg);
-                });
-        });
+    async function startRearCamera() {
+        let savedId = null;
+        try { savedId = localStorage.getItem(CAMERA_PREF_KEY); } catch (_) {}
+
+        // 1. If user explicitly chose a camera earlier and it still exists, use it
+        if (savedId) {
+            try {
+                const cams = await Html5Qrcode.getCameras();
+                if (cams.some(c => c.id === savedId)) {
+                    await qrScanner.start(savedId, SCAN_CONFIG, onScanSuccess, onScanError);
+                    await onCameraStarted(savedId);
+                    return;
+                }
+            } catch (_) {
+                try { localStorage.removeItem(CAMERA_PREF_KEY); } catch (_) {}
+            }
+        }
+
+        // 2. Force exact rear camera — unlike soft "environment", exact refuses
+        //    to silently fall back to the front selfie camera on phones.
+        try {
+            await qrScanner.start({ facingMode: { exact: "environment" } }, SCAN_CONFIG, onScanSuccess, onScanError);
+            await onCameraStarted();
+            return;
+        } catch (exactErr) {
+            console.warn("exact environment camera unavailable, falling back:", exactErr);
+        }
+
+        // 3. Fallback (desktop webcams or devices that reject exact constraints)
+        try {
+            const cameras = await Html5Qrcode.getCameras();
+            if (!cameras || cameras.length === 0) {
+                setCameraError("No camera found on this device.");
+                return;
+            }
+            const chosen = pickBestRearCamera(cameras);
+            await qrScanner.start(chosen.id, SCAN_CONFIG, onScanSuccess, onScanError);
+            await onCameraStarted(chosen.id);
+        } catch (fallbackErr) {
+            const errText = String(fallbackErr);
+            const msg = errText.includes("Permission")
+                ? "Camera permission denied — allow camera in browser settings."
+                : `Camera error: ${errText.slice(0, 80)}`;
+            setCameraError(msg);
+        }
+    }
+
+    async function switchCamera() {
+        if (availableCameras.length < 2) return;
+        switchCameraBtn.disabled = true;
+        try {
+            const currentIdx = availableCameras.findIndex(c => c.id === currentCameraId);
+            const nextCam = availableCameras[(currentIdx + 1) % availableCameras.length];
+            scanLocked = false;
+            try { await qrScanner.stop(); } catch (_) {}
+            await qrScanner.start(nextCam.id, SCAN_CONFIG, onScanSuccess, onScanError);
+            try { localStorage.setItem(CAMERA_PREF_KEY, nextCam.id); } catch (_) {}
+            await onCameraStarted(nextCam.id);
+        } catch (err) {
+            setCameraError(`Could not switch camera: ${String(err).slice(0, 80)}`);
+        } finally {
+            switchCameraBtn.disabled = false;
+        }
     }
 
     function setCameraError(msg) {
@@ -478,7 +563,7 @@
             try { qrScanner.resume(); } catch (_) {}
         }
         cameraStatus.className = "ready";
-        cameraStatus.textContent = "✅ Ready — hold card in front of camera";
+        cameraStatus.textContent = readyStatusText();
         scannedId.focus();
     }
 

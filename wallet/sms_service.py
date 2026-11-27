@@ -91,6 +91,9 @@ def send_pin_lockout_alert_sms(parent_phone: str, student_name: str, code: str):
 def _send_sms(parent_phone: str, message: str):
     if not is_valid_phone(parent_phone):
         return None
+    if not (getattr(settings, "AT_API_KEY", "") or "").strip():
+        logger.warning("AT_API_KEY is not configured; skipping SMS delivery.")
+        return None
 
     # Instantiate directly to avoid stale global state from africastalking.initialize()
     sms = SMSService(settings.AT_USERNAME, settings.AT_API_KEY)

@@ -4,7 +4,7 @@ import io
 import json
 import logging
 import uuid
-from datetime import timedelta
+from datetime import datetime, timedelta
 from decimal import Decimal, InvalidOperation
 
 import qrcode
@@ -257,15 +257,6 @@ def canteen_checkout(request):
             {"error": "Unable to complete checkout right now. Please try again."},
             status=500,
         )
-
-
-@csrf_exempt
-@require_POST
-def momo_callback_webhook(request):
-    # Legacy endpoint removed — routes /api/momo/callback/ and /api/airtel/callback/
-    # are no longer registered in config/urls.py.
-    return JsonResponse({"error": "Endpoint removed."}, status=410)
-
 
 
 @require_POST
@@ -620,12 +611,21 @@ def lookup_student(request):
         return JsonResponse({"error": "Student ID not found."}, status=404)
 
 
-@csrf_exempt
-@require_POST
-def airtel_callback_webhook(request):
-    # Legacy endpoint removed — route /api/airtel/callback/ is no longer
-    # registered in config/urls.py.
-    return JsonResponse({"error": "Endpoint removed."}, status=410)
+def _parse_report_date(date_str):
+    if date_str:
+        try:
+            return datetime.strptime(date_str.strip(), "%Y-%m-%d").date()
+        except ValueError:
+            pass
+    return timezone.localdate()
+
+
+def _run_inline_reconciliation(view_name: str):
+    """Best-effort reconciliation pass on page load (bounded for free-tier hosting)."""
+    try:
+        reconcile_pending_topups(max_batch=10)
+    except Exception:
+        logger.warning("Inline reconcile failed on %s load", view_name, exc_info=True)
 
 
 @staff_member_required(login_url="/admin/login/")
@@ -633,25 +633,11 @@ def bursar_daily_report(request):
     """
     Displays today's online top-ups, bursar desk cash top-ups, and canteen sales,
     and processes audited physical cash-in deposits from the bursar desk.
-    Runs a lightweight reconciliation pass on PENDING top-ups each time the
-    page loads (safe on PythonAnywhere free tier — max 10 records per pass).
+    Runs a lightweight reconciliation pass on PENDING top-ups each GET load.
     """
-    # Inline reconciliation — credit any verified PENDING top-ups
-    try:
-        reconcile_pending_topups(max_batch=10)
-    except Exception:
-        logger.warning("Inline reconcile failed on bursar_daily_report load", exc_info=True)
-
-    selected_date_str = request.GET.get("date") or request.POST.get("report_date")
-    if selected_date_str:
-        try:
-            report_date = timezone.datetime.strptime(
-                selected_date_str, "%Y-%m-%d"
-            ).date()
-        except ValueError:
-            report_date = timezone.localdate()
-    else:
-        report_date = timezone.localdate()
+    report_date = _parse_report_date(
+        request.GET.get("date") or request.POST.get("report_date")
+    )
 
     if request.method == "POST":
         reg_no = (request.POST.get("student_reg_no") or "").strip()
@@ -692,6 +678,8 @@ def bursar_daily_report(request):
             ),
         )
         return redirect(f"{request.path}?date={report_date:%Y-%m-%d}")
+
+    _run_inline_reconciliation("bursar_daily_report")
 
     schools_data = []
     for school in School.objects.all():
@@ -765,17 +753,8 @@ def daily_topup_noticeboard(request):
     Runs a lightweight reconciliation pass each time the page loads so PENDING
     top-ups get credited automatically even on PythonAnywhere free tier.
     """
-    # Inline reconciliation — credit any verified PENDING top-ups
-    try:
-        reconcile_pending_topups(max_batch=10)
-    except Exception:
-        logger.warning("Inline reconcile failed on noticeboard load", exc_info=True)
-
-    selected_date_str = request.GET.get("date")
-    if selected_date_str:
-        report_date = timezone.datetime.strptime(selected_date_str, "%Y-%m-%d").date()
-    else:
-        report_date = timezone.localdate()
+    _run_inline_reconciliation("daily_topup_noticeboard")
+    report_date = _parse_report_date(request.GET.get("date"))
 
     online_student_ids = WalletTopUp.objects.filter(
         status="SUCCESSFUL", created_at__date=report_date

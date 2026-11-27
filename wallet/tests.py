@@ -500,7 +500,7 @@ class CanteenPayProductionTests(TestCase):
                 "student_reg_no": "STD-2026-001",
                 "amount": "5000",
                 "receipt_note": "Visiting Day #12",
-                "report_date": timezone.now().date().strftime("%Y-%m-%d"),
+                "report_date": timezone.localdate().strftime("%Y-%m-%d"),
             },
         )
         self.assertEqual(post_res.status_code, 302)
@@ -516,6 +516,76 @@ class CanteenPayProductionTests(TestCase):
         self.assertIn("Cash Top-Ups Collected at Bursar Desk", html)
         self.assertIn("Canteen Sales (Vendor Payout Due)", html)
         self.assertIn("Visiting Day #12", html)
+        self.assertIn("lookupCashStudent()", html)
+        self.assertIn("/api/student/lookup/", html)
+
+        # Cash top-up student must appear on the morning noticeboard without exposing amounts
+        notice = self.client.get("/report/noticeboard/")
+        self.assertEqual(notice.status_code, 200)
+        notice_html = notice.content.decode()
+        self.assertIn("STD-2026-001", notice_html)
+        self.assertIn("Namukasa Grace", notice_html)
+        self.assertNotIn("15000", notice_html)
+        self.assertNotIn("5000", notice_html)
+
+    @patch("wallet.aggregator_service.verify_flw_transaction_by_ref")
+    def test_legacy_callback_routes_removed_and_inline_reconciliation(self, mock_verify):
+        # Legacy MoMo & Airtel unsplit callback routes must remain disabled (404)
+        self.assertEqual(
+            self.client.post("/api/momo/callback/", data="{}", content_type="application/json").status_code,
+            404,
+        )
+        self.assertEqual(
+            self.client.post("/api/airtel/callback/", data="{}", content_type="application/json").status_code,
+            404,
+        )
+
+        # Inline reconciliation on /report/daily/ and /report/noticeboard/ credits >2m PENDING top-ups
+        self.client.login(username="school_bursar", password="StrongPassword123!")
+        stale_topup = WalletTopUp.objects.create(
+            student=self.student,
+            payer_phone="256772111222",
+            amount=Decimal("2500.00"),
+            platform_fee=Decimal("500.00"),
+            status="PENDING",
+        )
+        WalletTopUp.objects.filter(pk=stale_topup.pk).update(
+            created_at=timezone.now() - timedelta(minutes=5)
+        )
+        mock_verify.return_value = {
+            "status": "success",
+            "data": {"status": "successful", "currency": "UGX", "amount": 3000},
+        }
+
+        report_res = self.client.get("/report/daily/")
+        self.assertEqual(report_res.status_code, 200)
+        stale_topup.refresh_from_db()
+        self.student.refresh_from_db()
+        self.assertEqual(stale_topup.status, "SUCCESSFUL")
+        self.assertEqual(self.student.wallet_balance, Decimal("12500.00"))
+
+        stale_topup_2 = WalletTopUp.objects.create(
+            student=self.student,
+            payer_phone="256772111222",
+            amount=Decimal("1500.00"),
+            platform_fee=Decimal("500.00"),
+            status="PENDING",
+        )
+        WalletTopUp.objects.filter(pk=stale_topup_2.pk).update(
+            created_at=timezone.now() - timedelta(minutes=5)
+        )
+        mock_verify.return_value = {
+            "status": "success",
+            "data": {"status": "successful", "currency": "UGX", "amount": 2000},
+        }
+
+        notice_res = self.client.get("/report/noticeboard/")
+        self.assertEqual(notice_res.status_code, 200)
+        stale_topup_2.refresh_from_db()
+        self.student.refresh_from_db()
+        self.assertEqual(stale_topup_2.status, "SUCCESSFUL")
+        self.assertEqual(self.student.wallet_balance, Decimal("14000.00"))
+        self.assertIn("Namukasa Grace", notice_res.content.decode())
 
     def test_pos_page_loads_local_qrcode_js(self):
         self.client.login(username="canteen_staff", password="StrongPassword123!")

@@ -1016,6 +1016,39 @@ class CanteenPayProductionTests(TestCase):
         self.assertIn("Invalid subaccount id", res.json()["error"])
         self.assertTrue(any("Invalid subaccount id" in msg for msg in logs.output))
 
+    @patch("wallet.aggregator_service.requests.get")
+    @patch("wallet.aggregator_service.requests.post")
+    def test_flutterwave_v3_urls_used_for_charge_and_verify(self, mock_post, mock_get):
+        """Charge and verification calls always target Flutterwave /v3 endpoints."""
+        from wallet.aggregator_service import (
+            initiate_ug_mobile_money_split,
+            verify_flw_transaction_by_ref,
+        )
+
+        mock_post.return_value.json.return_value = {"status": "success"}
+        mock_get.return_value.json.return_value = {"status": "success"}
+
+        for base_url in ("https://api.flutterwave.com", "https://api.flutterwave.com/v3/"):
+            with override_settings(FLW_BASE_URL=base_url, FLW_SECRET_KEY="FLWSECK-LIVE-999"):
+                initiate_ug_mobile_money_split(
+                    tx_ref="tx-abc",
+                    payer_phone="256772000001",
+                    student_amount=5000,
+                    platform_fee=500,
+                    school_subaccount_id="RS_TEST",
+                    student_name="Namukasa Grace",
+                )
+                verify_flw_transaction_by_ref("tx-abc")
+
+            self.assertEqual(
+                mock_post.call_args.args[0],
+                "https://api.flutterwave.com/v3/charges?type=mobile_money_uganda",
+            )
+            self.assertEqual(
+                mock_get.call_args.args[0],
+                "https://api.flutterwave.com/v3/transactions/verify_by_reference?tx_ref=tx-abc",
+            )
+
 
 class OnCommitSMSTests(TransactionTestCase):
     @patch("wallet.aggregator_service.send_topup_receipt_sms")

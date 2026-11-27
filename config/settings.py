@@ -135,7 +135,7 @@ AT_USERNAME = os.environ.get("AT_USERNAME", "sandbox")
 AT_API_KEY = os.environ.get("AT_API_KEY", "")
 
 # Flutterwave Uganda Split-Payment Configuration
-FLW_BASE_URL = "https://api.flutterwave.com"
+FLW_BASE_URL = "https://api.flutterwave.com/v3"
 FLW_SECRET_KEY = os.environ.get(
     "FLW_SECRET_KEY", "FLWSECK_TEST-YOUR-SECRET-KEY-HERE"
 )  # Replace with live key in production

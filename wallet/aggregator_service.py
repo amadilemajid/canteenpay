@@ -12,6 +12,12 @@ from .sms_service import send_topup_receipt_sms
 logger = logging.getLogger(__name__)
 
 
+def _flw_v3_base_url() -> str:
+    """Normalizes FLW_BASE_URL so Flutterwave v3 endpoints always include /v3 once."""
+    base = (getattr(settings, "FLW_BASE_URL", "") or "https://api.flutterwave.com").rstrip("/")
+    return base if base.endswith("/v3") else f"{base}/v3"
+
+
 def initiate_ug_mobile_money_split(
     tx_ref: str,
     payer_phone: str,
@@ -42,7 +48,7 @@ def initiate_ug_mobile_money_split(
     total_charge = student_amount + platform_fee
     network = "AIRTEL" if payer_phone.startswith(("25670", "25675", "25674")) else "MTN"
 
-    url = f"{settings.FLW_BASE_URL}/charges?type=mobile_money_uganda"
+    url = f"{_flw_v3_base_url()}/charges?type=mobile_money_uganda"
     headers = {
         "Authorization": f"Bearer {secret_key}",
         "Content-Type": "application/json",
@@ -86,7 +92,7 @@ def verify_flw_transaction_by_ref(tx_ref: str) -> dict:
     Directly queries Flutterwave to verify a transaction's final status
     using our WalletTopUp momo_reference_id (tx_ref).
     """
-    url = f"{settings.FLW_BASE_URL}/transactions/verify_by_reference?tx_ref={tx_ref}"
+    url = f"{_flw_v3_base_url()}/transactions/verify_by_reference?tx_ref={tx_ref}"
     headers = {
         "Authorization": f"Bearer {settings.FLW_SECRET_KEY}",
         "Content-Type": "application/json",

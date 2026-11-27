@@ -130,36 +130,9 @@ STATIC_ROOT = os.environ.get(
 )
 
 
-# MTN MoMo API Configuration
-MOMO_BASE_URL = "https://sandbox.momodeveloper.mtn.com"
-MOMO_TARGET_ENV = "sandbox"         # Change to "mtnuganda" in Production
-MOMO_CURRENCY = "EUR"               # Change to "UGX" in Production
-MOMO_SUBSCRIPTION_KEY = os.environ.get(
-    "MOMO_SUBSCRIPTION_KEY", "10d9756a74124cc882117853e32a1b7a"
-)
-MOMO_API_USER = os.environ.get(
-    "MOMO_API_USER", "b9fed0ec-9454-4280-b56e-39cccbc9c595"
-)
-MOMO_API_KEY = os.environ.get(
-    "MOMO_API_KEY", "1d7741b530914878846d880eb0cfac40"
-)
-
-# Must be a public HTTPS URL (use ngrok during local testing)
-MOMO_CALLBACK_URL = "https://amadilemajid10.pythonanywhere.com/api/momo/callback/"
-
 # Africa's Talking SMS Configuration
-AT_USERNAME = os.environ.get("AT_USERNAME", "sandbox")  # Change to your live Africa's Talking username in production
-AT_API_KEY = os.environ.get(
-    "AT_API_KEY",
-    "atsk_3c04485eb615a2a1681a2d67f1db63e2d67392d6e0e038e3a1161d5e3c518ad6aa5fde36",
-)
-
-# Airtel Money Uganda API Configuration
-AIRTEL_BASE_URL = "https://openapi.airtel.africa"
-AIRTEL_CLIENT_ID = os.environ.get("AIRTEL_CLIENT_ID", "YOUR_AIRTEL_CLIENT_ID")
-AIRTEL_CLIENT_SECRET = os.environ.get("AIRTEL_CLIENT_SECRET", "YOUR_AIRTEL_CLIENT_SECRET")
-AIRTEL_COUNTRY = "UG"
-AIRTEL_CURRENCY = "UGX"
+AT_USERNAME = os.environ.get("AT_USERNAME", "sandbox")
+AT_API_KEY = os.environ.get("AT_API_KEY", "")
 
 # Flutterwave Uganda Split-Payment Configuration
 FLW_BASE_URL = "https://api.flutterwave.com"

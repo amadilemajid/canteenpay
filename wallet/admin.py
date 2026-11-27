@@ -262,7 +262,11 @@ class StudentAdmin(admin.ModelAdmin):
         for student in queryset.select_related("school"):
             minted_pin = _mint_pin()
             student.set_pin(minted_pin)
-            student.save(update_fields=["pin_hash"])
+            student.failed_pin_attempts = 0
+            student.pin_locked_until = None
+            student.save(
+                update_fields=["pin_hash", "failed_pin_attempts", "pin_locked_until"]
+            )
             if is_valid_phone(student.parent_phone):
                 send_welcome_pin_sms(
                     parent_phone=student.parent_phone,

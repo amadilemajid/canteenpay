@@ -3,8 +3,10 @@ from datetime import timedelta
 from decimal import Decimal
 from unittest.mock import patch
 
+from django.contrib.auth.hashers import check_password
 from django.contrib.auth.models import User
 from django.core.exceptions import ValidationError
+from django.core.files.uploadedfile import SimpleUploadedFile
 from django.core.management import call_command
 from django.test import Client, TestCase, TransactionTestCase, override_settings
 from django.utils import timezone
@@ -498,6 +500,104 @@ class CanteenPayProductionTests(TestCase):
         html = res.content.decode()
         self.assertIn("wallet/js/html5-qrcode.min.js", html)
         self.assertNotIn("unpkg.com", html)
+
+    def test_auto_code_allocation_csv_import_cards_noticeboard_and_pin_reset(self):
+        school = School.objects.create(name="Yumbe Model", code_prefix="ymb")
+        self.assertEqual(school.code_prefix, "YMB")
+        s1 = Student(
+            school=school,
+            full_name="Amina Okello",
+            class_stream="S.1 East",
+            parent_phone="",
+            failed_pin_attempts=4,
+            pin_locked_until=timezone.now() + timedelta(minutes=10),
+        )
+        s1.set_pin("1111")
+        s1.save()
+        s2 = Student(
+            school=school,
+            full_name="Peter Drani",
+            class_stream="S.4 A",
+            parent_phone="",
+        )
+        s2.set_pin("2222")
+        s2.save()
+        self.assertEqual(s1.student_reg_no, "YMB-0001")
+        self.assertEqual(s2.student_reg_no, "YMB-0002")
+
+        # Parent top-up page stays code-only (no name search)
+        parent_res = self.client.get("/")
+        self.assertNotIn(b"nameSearch", parent_res.content)
+        self.assertNotIn(b"pos/students/search", parent_res.content)
+
+        # Unauthenticated POS search is redirected; authenticated POS search returns student
+        self.assertEqual(self.client.get("/api/pos/students/search/?q=Amina").status_code, 302)
+        self.client.login(username="canteen_staff", password="StrongPassword123!")
+        search_res = self.client.get("/api/pos/students/search/?q=Amina")
+        self.assertEqual(search_res.status_code, 200)
+        results = search_res.json()["results"]
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0]["student_reg_no"], "YMB-0001")
+        self.assertEqual(results[0]["class_stream"], "S.1 East")
+        self.assertNotIn("pin", results[0])
+
+        # CSV import updates existing student phone without altering PIN/code, skips invalid row, mints new PIN
+        admin_user = User.objects.create_superuser("admin_bursar", "b@example.com", "StrongPassword123!")
+        self.client.force_login(admin_user)
+        csv_body = (
+            "full_name,class_stream,parent_phone,admission_no\n"
+            "Amina Okello,S.1 East,0772000111,OLD-1\n"
+            "New Learner,S.3 West,,ADM-9\n"
+            ",S.1 East,0772,ADM-10\n"
+        )
+        upload = SimpleUploadedFile("class.csv", csv_body.encode("utf-8"), content_type="text/csv")
+        with patch("wallet.admin.send_welcome_pin_sms") as mock_welcome_sms:
+            imp_res = self.client.post(
+                "/admin/wallet/student/import-csv/",
+                {"school": str(school.id), "csv_file": upload},
+            )
+        self.assertEqual(imp_res.status_code, 200)
+        imp_html = imp_res.content.decode()
+        self.assertIn("One-time take-home PIN slip", imp_html)
+        self.assertIn("Do not file these slips", imp_html)
+        self.assertIn("Line 4", imp_html)
+        self.assertIn("YMB-0003", imp_html)
+        mock_welcome_sms.assert_not_called()
+
+        s1.refresh_from_db()
+        self.assertTrue(check_password("1111", s1.pin_hash))
+        self.assertEqual(s1.parent_phone, "0772000111")
+        self.assertEqual(s1.student_reg_no, "YMB-0001")
+
+        # Reset PIN & Print Single PIN Slip clears lockout and prints fresh PIN
+        with patch("wallet.admin.send_welcome_pin_sms") as mock_reset_sms:
+            reset_res = self.client.post(
+                "/admin/wallet/student/",
+                {
+                    "action": "reset_pin_and_print_slip",
+                    "_selected_action": [str(s1.pk)],
+                },
+            )
+        self.assertEqual(reset_res.status_code, 200)
+        self.assertIn("One-time take-home PIN slip", reset_res.content.decode())
+        mock_reset_sms.assert_called_once()
+        s1.refresh_from_db()
+        self.assertEqual(s1.failed_pin_attempts, 0)
+        self.assertIsNone(s1.pin_locked_until)
+
+        # 8-up cards & noticeboard
+        cards_res = self.client.get("/report/cards/")
+        self.assertEqual(cards_res.status_code, 200)
+        cards_html = cards_res.content.decode()
+        self.assertIn("YMB-0001", cards_html)
+        self.assertIn("S.1 East", cards_html)
+        self.assertNotIn("One-time PIN", cards_html)
+        self.assertNotIn("school id", cards_html.lower())
+
+        notice_res = self.client.get("/report/noticeboard/")
+        self.assertEqual(notice_res.status_code, 200)
+        self.assertIn(b"CanteenPay Card", notice_res.content)
+        self.assertNotIn(b"School ID", notice_res.content)
 
 
 class OnCommitSMSTests(TransactionTestCase):

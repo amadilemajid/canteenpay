@@ -396,18 +396,23 @@ def initiate_parent_topup(request):
         topup.status = "FAILED"
         topup.save(update_fields=["status"])
         logger.error("Flutterwave rejected top-up %s (reg_no=%s): %s", momo_ref_id, reg_no, flw_res)
-        gateway_msg = str(flw_res.get("message") or "").strip()
+
+        # Try message at top level, then nested under data (Flutterwave sometimes nests it)
+        gateway_msg = (
+            str(flw_res.get("message") or "").strip()
+            or str((flw_res.get("data") or {}).get("message") or "").strip()
+        )
         if (
             gateway_msg
             and not gateway_msg.startswith("Flutterwave connection error")
             and not gateway_msg.startswith("Flutterwave returned non-JSON")
         ):
-            user_err = f"Payment gateway rejected this request: {gateway_msg}"
+            user_err = f"Payment gateway: {gateway_msg}"
         else:
-            user_err = (
-                "Payment gateway could not start this transaction. "
-                "Please verify your phone number and try again."
-            )
+            # Surface the raw status/message for diagnosis when no clean message is found
+            raw_status = flw_res.get("status", "unknown")
+            raw_msg = str(flw_res)[:300]
+            user_err = f"Payment gateway error ({raw_status}): {raw_msg}"
         return JsonResponse({"error": user_err}, status=502)
 
     except Student.DoesNotExist:

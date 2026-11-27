@@ -642,10 +642,11 @@ class CanteenPayProductionTests(TestCase):
         admin_user = User.objects.create_superuser("admin_bursar", "b@example.com", "StrongPassword123!")
         self.client.force_login(admin_user)
         csv_body = (
-            "full_name,class_stream,parent_phone,admission_no\n"
-            "Amina Okello,S.1 East,0772000111,OLD-1\n"
-            "New Learner,S.3 West,,ADM-9\n"
-            ",S.1 East,0772,ADM-10\n"
+            "full_name,class_stream,parent_phone,admission_no,pin\n"
+            "Amina Okello,S.1 East,0772000111,OLD-1,\n"
+            "New Learner,S.3 West,,ADM-9,\n"
+            ",S.1 East,0772,ADM-10,\n"
+            "Zero Pad,S.2 North,,ADM-11,42\n"
         )
         upload = SimpleUploadedFile("class.csv", csv_body.encode("utf-8"), content_type="text/csv")
         with patch("wallet.admin.send_welcome_pin_sms") as mock_welcome_sms:
@@ -658,7 +659,14 @@ class CanteenPayProductionTests(TestCase):
         self.assertIn("One-time take-home PIN slip", imp_html)
         self.assertIn("Do not file these slips", imp_html)
         self.assertIn("Line 4", imp_html)
+        self.assertIn("Yumbe Model", imp_html)
+        self.assertIn("New Learner", imp_html)
+        self.assertIn("S.3 West", imp_html)
         self.assertIn("YMB-0003", imp_html)
+        self.assertIn("YMB-0004", imp_html)
+        self.assertIn('<span class="pin">0042</span>', imp_html)
+        s4 = Student.objects.get(student_reg_no="YMB-0004")
+        self.assertTrue(check_password("0042", s4.pin_hash))
         mock_welcome_sms.assert_not_called()
 
         s1.refresh_from_db()
@@ -676,7 +684,13 @@ class CanteenPayProductionTests(TestCase):
                 },
             )
         self.assertEqual(reset_res.status_code, 200)
-        self.assertIn("One-time take-home PIN slip", reset_res.content.decode())
+        reset_html = reset_res.content.decode()
+        self.assertIn("One-time take-home PIN slip", reset_html)
+        self.assertIn("Yumbe Model", reset_html)
+        self.assertIn("Amina Okello", reset_html)
+        self.assertIn("S.1 East", reset_html)
+        self.assertIn("YMB-0001", reset_html)
+        self.assertRegex(reset_html, r'<span class="pin">\d{4}</span>')
         mock_reset_sms.assert_called_once()
         s1.refresh_from_db()
         self.assertEqual(s1.failed_pin_attempts, 0)

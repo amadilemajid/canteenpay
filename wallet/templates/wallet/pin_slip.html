@@ -4,85 +4,193 @@
     <meta charset="UTF-8">
     <title>CanteenPay | One-Time Take-Home PIN Slip</title>
     <style>
-        body { font-family: Arial, sans-serif; background: #f3f4f6; color: #111827; margin: 0; padding: 24px; }
+        @page { size: A4 portrait; margin: 10mm; }
+        * { box-sizing: border-box; }
+        body {
+            font-family: Arial, sans-serif;
+            background: #f3f4f6;
+            color: #111827;
+            margin: 0;
+            padding: 20px;
+        }
+        .container { max-width: 190mm; margin: 0 auto; }
+        .no-print { margin-bottom: 12px; display: flex; gap: 10px; align-items: center; }
+        .no-print button {
+            padding: 10px 16px;
+            font-weight: 700;
+            cursor: pointer;
+            border: none;
+            border-radius: 6px;
+            background: #065f46;
+            color: #fff;
+        }
+        .no-print a {
+            color: #1f2937;
+            font-size: 0.9rem;
+            font-weight: 600;
+            text-decoration: none;
+        }
         .banner {
-            max-width: 720px;
-            margin: 0 auto 16px;
+            margin-bottom: 14px;
             background: #fef3c7;
             border: 2px solid #b45309;
             border-radius: 8px;
-            padding: 14px 16px;
-            font-size: 0.95rem;
+            padding: 12px 16px;
+            font-size: 0.92rem;
+            line-height: 1.45;
         }
-        .banner strong { display: block; margin-bottom: 4px; text-transform: uppercase; letter-spacing: 0.03em; }
-        .summary { max-width: 720px; margin: 0 auto 16px; color: #374151; font-size: 0.92rem; }
-        .slip {
-            max-width: 720px;
-            margin: 0 auto 14px;
-            background: #fff;
-            border: 1px dashed #111827;
+        .banner strong {
+            display: block;
+            margin-bottom: 4px;
+            text-transform: uppercase;
+            letter-spacing: 0.03em;
+        }
+        .summary { margin: 0 0 14px; color: #374151; font-size: 0.92rem; }
+        .errors {
+            margin-bottom: 16px;
+            background: #fef2f2;
+            border: 1px solid #f87171;
             border-radius: 8px;
-            padding: 16px 18px;
+            padding: 12px 16px;
+            font-size: 0.9rem;
+        }
+        .errors ul { margin: 6px 0 0; padding-left: 18px; }
+        .slips-grid {
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 6mm;
+        }
+        .slip {
+            background: #fff;
+            border: 1.5px dashed #111827;
+            border-radius: 6px;
+            padding: 12px 14px;
+            break-inside: avoid;
             page-break-inside: avoid;
         }
-        .slip h2 { margin: 0 0 8px; font-size: 1rem; color: #065f46; }
+        .slip-header {
+            border-bottom: 2px solid #065f46;
+            padding-bottom: 6px;
+            margin-bottom: 8px;
+        }
+        .school-name {
+            font-size: 0.82rem;
+            font-weight: 800;
+            color: #065f46;
+            text-transform: uppercase;
+            letter-spacing: 0.04em;
+        }
+        .slip-title {
+            margin: 2px 0 0;
+            font-size: 0.98rem;
+            font-weight: 700;
+            color: #111827;
+        }
         table { width: 100%; border-collapse: collapse; }
-        th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid #e5e7eb; }
-        th { width: 140px; color: #4b5563; font-weight: 600; }
-        .pin { font-size: 1.6rem; font-weight: 800; letter-spacing: 0.2em; font-family: Consolas, monospace; }
-        .code { font-size: 1.15rem; font-weight: 800; font-family: Consolas, monospace; }
-        .errors { max-width: 720px; margin: 0 auto 16px; background: #fef2f2; border: 1px solid #f87171; border-radius: 8px; padding: 12px 16px; }
-        .no-print button { padding: 10px 16px; font-weight: 700; cursor: pointer; border: none; border-radius: 6px; background: #111827; color: #fff; }
+        th, td {
+            text-align: left;
+            padding: 5px 4px;
+            border-bottom: 1px solid #e5e7eb;
+            vertical-align: middle;
+        }
+        th {
+            width: 118px;
+            color: #4b5563;
+            font-size: 0.85rem;
+            font-weight: 600;
+        }
+        td { font-size: 0.95rem; font-weight: 600; color: #111827; }
+        .code {
+            font-size: 1.15rem;
+            font-weight: 800;
+            font-family: Consolas, "Courier New", monospace;
+            letter-spacing: 0.04em;
+        }
+        .pin-row th, .pin-row td { border-bottom: none; padding-top: 8px; }
+        .pin {
+            display: inline-block;
+            padding: 4px 10px;
+            border: 2px solid #111827;
+            border-radius: 6px;
+            background: #f9fafb;
+            font-size: 1.9rem;
+            font-weight: 900;
+            letter-spacing: 0.24em;
+            font-family: Consolas, "Courier New", monospace;
+        }
+        .slip-note {
+            margin: 8px 0 0;
+            font-size: 0.76rem;
+            color: #4b5563;
+            line-height: 1.35;
+        }
+        @media (max-width: 640px) {
+            .slips-grid { grid-template-columns: 1fr; }
+        }
         @media print {
             body { background: #fff; padding: 0; }
-            .no-print, .summary, .errors { display: none; }
-            .banner { border-width: 1px; }
+            .container { max-width: 100%; }
+            .no-print, .summary, .errors, .banner { display: none; }
+            .slips-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 5mm; }
+            .slip { border-width: 1.5px; }
+            .pin { background: #fff; }
         }
     </style>
 </head>
 <body>
-    <div class="no-print" style="max-width:720px; margin:0 auto 12px;">
-        <button type="button" onclick="window.print()">Print PIN slips</button>
-    </div>
+    <div class="container">
+        <div class="no-print">
+            <button type="button" onclick="window.print()">Print PIN slips (A4)</button>
+            <a href="/admin/wallet/student/">Back to Students</a>
+        </div>
 
-    <div class="banner">
-        <strong>One-time take-home PIN slip</strong>
-        Give each slip to the parent or student. Do not file these slips in the bursar's office.
-        The PIN is shown only on this page and is not stored in CanteenPay. It cannot be opened again.
-    </div>
+        <div class="banner">
+            <strong>One-time take-home PIN slip</strong>
+            Give each slip to the parent or student. Do not file these slips in the bursar's office.
+            The PIN is shown only on this page and is not stored in CanteenPay. It cannot be opened again.
+        </div>
 
-    <p class="summary">
-        {% if single %}
-            Fresh PIN issued for {{ slips|length }} student{{ slips|length|pluralize }}.
-        {% else %}
-            Import finished: {{ created_count }} created, {{ updated_count }} already on file (PIN and code left unchanged).
+        <p class="summary">
+            {% if single %}
+                Fresh PIN issued for {{ slips|length }} student{{ slips|length|pluralize }}.
+            {% else %}
+                Import finished: {{ created_count }} created, {{ updated_count }} already on file (PIN and code left unchanged).
+            {% endif %}
+            {% if errors %} {{ errors|length }} row{{ errors|length|pluralize }} need attention.{% endif %}
+        </p>
+
+        {% if errors %}
+        <div class="errors">
+            <strong>Rows skipped</strong>
+            <ul>
+                {% for error in errors %}
+                <li>Line {{ error.line }}: {{ error.message }}</li>
+                {% endfor %}
+            </ul>
+        </div>
         {% endif %}
-        {% if errors %} {{ errors|length }} row{{ errors|length|pluralize }} need attention.{% endif %}
-    </p>
 
-    {% if errors %}
-    <div class="errors">
-        <strong>Rows skipped</strong>
-        <ul>
-            {% for error in errors %}
-            <li>Line {{ error.line }}: {{ error.message }}</li>
+        <section class="slips-grid">
+            {% for slip in slips %}
+            <article class="slip">
+                <header class="slip-header">
+                    <div class="school-name">{{ slip.school_name }}</div>
+                    <h2 class="slip-title">One-Time Take-Home PIN Slip</h2>
+                </header>
+                <table>
+                    <tr><th>Full Name</th><td>{{ slip.full_name }}</td></tr>
+                    <tr><th>Class</th><td>{{ slip.class_stream }}</td></tr>
+                    <tr><th>CanteenPay Code</th><td class="code">{{ slip.student_reg_no }}</td></tr>
+                    <tr class="pin-row"><th>One-Time PIN</th><td><span class="pin">{{ slip.pin }}</span></td></tr>
+                </table>
+                <p class="slip-note">
+                    Keep this PIN private. Top up online or at the Bursar desk using CanteenPay Code <strong>{{ slip.student_reg_no }}</strong>.
+                </p>
+            </article>
+            {% empty %}
+            <p class="summary">No PIN slips to hand out.</p>
             {% endfor %}
-        </ul>
+        </section>
     </div>
-    {% endif %}
-
-    {% for slip in slips %}
-    <article class="slip">
-        <h2>CanteenPay wallet PIN</h2>
-        <table>
-            <tr><th>Name</th><td>{{ slip.full_name }}</td></tr>
-            <tr><th>Class</th><td>{{ slip.class_stream }}</td></tr>
-            <tr><th>Wallet code</th><td class="code">{{ slip.student_reg_no }}</td></tr>
-            <tr><th>One-time PIN</th><td class="pin">{{ slip.pin }}</td></tr>
-        </table>
-    </article>
-    {% empty %}
-    <p class="summary">No new students were created, so there is no PIN slip to hand out.</p>
-    {% endfor %}
 </body>
 </html>

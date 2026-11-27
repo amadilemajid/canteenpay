@@ -56,6 +56,24 @@ def _mint_pin():
     return f"{secrets.randbelow(10000):04d}"
 
 
+def _format_4digit_pin(raw_pin: str) -> str:
+    """Zero-pads numeric PINs up to 4 digits (e.g. Excel-stripped '42' -> '0042')."""
+    cleaned = (raw_pin or "").strip()
+    if cleaned.isdigit() and len(cleaned) <= 4:
+        return cleaned.zfill(4)
+    return cleaned
+
+
+def _build_pin_slip(student: Student, pin: str) -> dict:
+    return {
+        "school_name": student.school.name,
+        "full_name": student.full_name,
+        "class_stream": student.class_stream,
+        "student_reg_no": student.student_reg_no,
+        "pin": _format_4digit_pin(pin),
+    }
+
+
 def _normalized_row(row):
     return {
         (key or "").strip().lower(): (value or "").strip()
@@ -203,7 +221,7 @@ class StudentAdmin(admin.ModelAdmin):
                             updated_count += 1
                             continue
 
-                        minted_pin = raw_pin or _mint_pin()
+                        minted_pin = _format_4digit_pin(raw_pin) if raw_pin else _mint_pin()
                         student = Student(
                             school=school,
                             student_reg_no=reg_no,
@@ -214,14 +232,7 @@ class StudentAdmin(admin.ModelAdmin):
                         student.set_pin(minted_pin)
                         student.save()
                         created_count += 1
-                        slips.append(
-                            {
-                                "full_name": student.full_name,
-                                "class_stream": student.class_stream,
-                                "student_reg_no": student.student_reg_no,
-                                "pin": minted_pin,
-                            }
-                        )
+                        slips.append(_build_pin_slip(student, minted_pin))
                         if is_valid_phone(student.parent_phone):
                             send_welcome_pin_sms(
                                 parent_phone=student.parent_phone,
@@ -233,18 +244,14 @@ class StudentAdmin(admin.ModelAdmin):
                     except Exception as exc:
                         errors.append({"line": line_no, "message": str(exc)})
 
-                return render(
+                return self._render_pin_slips(
                     request,
-                    "wallet/pin_slip.html",
-                    {
-                        **self.admin_site.each_context(request),
-                        "title": "One-Time Take-Home PIN Slips",
-                        "slips": slips,
-                        "errors": errors,
-                        "created_count": created_count,
-                        "updated_count": updated_count,
-                        "single": False,
-                    },
+                    title="One-Time Take-Home PIN Slips",
+                    slips=slips,
+                    errors=errors,
+                    created_count=created_count,
+                    updated_count=updated_count,
+                    single=False,
                 )
         else:
             form = CsvImportForm()
@@ -263,6 +270,31 @@ class StudentAdmin(admin.ModelAdmin):
             request,
             "wallet/wallet_cards.html",
             {"pages": wallet_card_pages(students)},
+        )
+
+    def _render_pin_slips(
+        self,
+        request,
+        *,
+        title: str,
+        slips: list,
+        errors: list,
+        created_count: int,
+        updated_count: int,
+        single: bool,
+    ):
+        return render(
+            request,
+            "wallet/pin_slip.html",
+            {
+                **self.admin_site.each_context(request),
+                "title": title,
+                "slips": slips,
+                "errors": errors,
+                "created_count": created_count,
+                "updated_count": updated_count,
+                "single": single,
+            },
         )
 
     @admin.action(description="Reset PIN & Print Single PIN Slip")
@@ -284,27 +316,16 @@ class StudentAdmin(admin.ModelAdmin):
                     code=student.student_reg_no,
                     pin=minted_pin,
                 )
-            slips.append(
-                {
-                    "full_name": student.full_name,
-                    "class_stream": student.class_stream,
-                    "student_reg_no": student.student_reg_no,
-                    "pin": minted_pin,
-                }
-            )
+            slips.append(_build_pin_slip(student, minted_pin))
 
-        return render(
+        return self._render_pin_slips(
             request,
-            "wallet/pin_slip.html",
-            {
-                **self.admin_site.each_context(request),
-                "title": "One-Time PIN Slip",
-                "slips": slips,
-                "errors": [],
-                "created_count": len(slips),
-                "updated_count": 0,
-                "single": True,
-            },
+            title="One-Time PIN Slip",
+            slips=slips,
+            errors=[],
+            created_count=len(slips),
+            updated_count=0,
+            single=True,
         )
 
 

@@ -7,21 +7,109 @@
     <title>CanteenPay | Canteen Scanner POS</title>
     <script src="{% static 'wallet/js/html5-qrcode.min.js' %}"></script>
     <style>
-        body { font-family: system-ui, sans-serif; background: #111827; color: #f9fafb; margin: 0; padding: 16px; }
-        .container { max-width: 460px; margin: 0 auto; background: #1f2937; padding: 20px; border-radius: 12px; }
+        /* ── Base ── */
+        *, *::before, *::after { box-sizing: border-box; }
+        body { font-family: system-ui, sans-serif; background: #111827; color: #f9fafb; margin: 0; padding: 0; }
+
+        /* ── Staff header bar ── */
+        .staff-bar {
+            background: #0f172a;
+            border-bottom: 2px solid #10b981;
+            padding: 8px 16px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 10px;
+            flex-wrap: wrap;
+        }
+        .staff-bar .attendant {
+            font-size: 0.85rem;
+            color: #a7f3d0;
+            font-weight: 700;
+            white-space: nowrap;
+        }
+        .staff-bar .attendant span { color: #6ee7b7; }
+        .staff-bar nav {
+            display: flex;
+            gap: 6px;
+            flex-wrap: wrap;
+            align-items: center;
+        }
+        .staff-bar nav a {
+            font-size: 0.78rem;
+            color: #93c5fd;
+            text-decoration: none;
+            padding: 4px 9px;
+            border: 1px solid #1e40af;
+            border-radius: 5px;
+            background: #1e3a5f;
+            white-space: nowrap;
+            transition: background 0.15s;
+        }
+        .staff-bar nav a:hover { background: #1d4ed8; color: #fff; }
+        .staff-bar .logout-form button {
+            font-size: 0.78rem;
+            color: #fca5a5;
+            background: #3f1515;
+            border: 1px solid #7f1d1d;
+            border-radius: 5px;
+            padding: 4px 10px;
+            cursor: pointer;
+            font-weight: 700;
+            width: auto;
+            margin: 0;
+            white-space: nowrap;
+            transition: background 0.15s;
+        }
+        .staff-bar .logout-form button:hover { background: #7f1d1d; color: #fff; }
+
+        /* ── Main card ── */
+        .container { max-width: 460px; margin: 16px auto; background: #1f2937; padding: 20px; border-radius: 12px; }
         h2 { margin-top: 0; text-align: center; color: #10b981; }
+
+        /* ── QR reader ── */
         #reader { width: 100%; border-radius: 8px; overflow: hidden; background: #000; }
+
+        /* ── Form controls ── */
         label { display: block; margin: 12px 0 4px; font-size: 0.9rem; color: #d1d5db; }
-        input { width: 100%; padding: 12px; border-radius: 8px; border: 1px solid #374151; background: #374151; color: #fff; font-size: 1.1rem; box-sizing: border-box; }
-        button { width: 100%; padding: 14px; background: #10b981; color: #fff; font-weight: 700; border: none; border-radius: 8px; font-size: 1.1rem; margin-top: 16px; cursor: pointer; }
+        input { width: 100%; padding: 12px; border-radius: 8px; border: 1px solid #374151; background: #374151; color: #fff; font-size: 1.1rem; }
+        input:focus { outline: 2px solid #10b981; border-color: #10b981; }
+
+        /* ── Buttons ── */
+        button { width: 100%; padding: 14px; background: #10b981; color: #fff; font-weight: 700; border: none; border-radius: 8px; font-size: 1.1rem; margin-top: 16px; cursor: pointer; transition: background 0.15s; }
+        button:hover:not(:disabled) { background: #059669; }
         button:disabled { opacity: 0.6; cursor: not-allowed; }
+
+        /* ── Clear / Next Student button ── */
+        #clearBtn {
+            display: none;
+            background: #374151;
+            color: #d1d5db;
+            border: 1px solid #4b5563;
+            font-size: 0.95rem;
+            padding: 11px 14px;
+            margin-top: 10px;
+        }
+        #clearBtn:hover:not(:disabled) { background: #4b5563; color: #fff; }
+
+        /* ── Balance button ── */
+        #balanceBtn { background: #3b82f6; margin-top: 10px; }
+        #balanceBtn:hover:not(:disabled) { background: #2563eb; }
+
+        /* ── Student info card ── */
         .info-card { background: #374151; padding: 12px; border-radius: 8px; margin-top: 12px; display: none; }
+
+        /* ── Name search results ── */
         .results { margin-top: 6px; border-radius: 8px; overflow: hidden; }
-        .results button { width: 100%; text-align: left; margin: 0; border-radius: 0; background: #374151; font-size: 0.95rem; font-weight: 600; padding: 10px 12px; border-bottom: 1px solid #4b5563; }
+        .results button { width: 100%; text-align: left; margin: 0; border-radius: 0; background: #374151; font-size: 0.95rem; font-weight: 600; padding: 10px 12px; border-bottom: 1px solid #4b5563; margin-top: 0; }
         .results button span { display: block; color: #9ca3af; font-size: 0.8rem; font-weight: 500; }
-        .alert { padding: 12px; border-radius: 8px; margin-top: 14px; font-weight: 600; text-align: center; display: none; }
-        .ok { background: #065f46; color: #a7f3d0; }
+
+        /* ── Alert boxes ── */
+        .alert { padding: 12px; border-radius: 8px; margin-top: 14px; font-weight: 600; text-align: center; display: none; white-space: pre-line; }
+        .ok  { background: #065f46; color: #a7f3d0; }
         .err { background: #7f1d1d; color: #fecaca; }
+
+        /* ── Charge confirmation banner ── */
         .confirm-banner {
             display: none;
             margin-top: 14px;
@@ -37,6 +125,24 @@
     </style>
 </head>
 <body>
+
+<!-- ── Staff header bar ─────────────────────────────────────────────── -->
+<div class="staff-bar">
+    <div class="attendant">
+        🧑‍💼 Attendant: <span>{{ request.user.username }}</span>
+    </div>
+    <nav>
+        <a href="{% url 'bursar_daily_report' %}">📊 Daily Report</a>
+        <a href="{% url 'daily_topup_noticeboard' %}">📋 Top-Up Board</a>
+        <a href="{% url 'wallet_cards_page' %}">🪪 Wallet Cards</a>
+    </nav>
+    <form class="logout-form" method="post" action="{% url 'admin:logout' %}">
+        {% csrf_token %}
+        <button type="submit">⏏ Log Out</button>
+    </form>
+</div>
+
+<!-- ── Main POS card ──────────────────────────────────────────────────── -->
 <div class="container">
     {% csrf_token %}
     <h2>Canteen QR Checkout</h2>
@@ -47,85 +153,93 @@
     <div id="searchResults" class="results"></div>
 
     <label for="scannedId">CanteenPay code (scan the card or type it)</label>
-    <input type="text" id="scannedId" placeholder="e.g. YMB-0042" autocomplete="off" autofocus>
+    <input type="text" id="scannedId" placeholder="e.g. YMB-0042" autocomplete="off">
 
     <div id="studentInfo" class="info-card"></div>
 
     <label for="orderAmount">Purchase Amount (UGX)</label>
-    <input type="number" id="orderAmount" placeholder="e.g. 2500" min="100" step="100">
+    <input type="number" id="orderAmount" placeholder="e.g. 2500" min="100" step="100" autocomplete="off">
 
     <label for="itemsNote">Items Bought (Optional)</label>
-    <input type="text" id="itemsNote" placeholder="e.g. Chapati + Soda">
+    <input type="text" id="itemsNote" placeholder="e.g. Chapati + Soda" autocomplete="off">
 
+    <!-- Confirmation banner — shown as soon as student + amount are known -->
     <div id="confirmChargeBanner" class="confirm-banner" role="status" aria-live="polite"></div>
 
     <label for="studentPin">Student 4-Digit PIN</label>
-    <input type="password" id="studentPin" maxlength="4" inputmode="numeric" placeholder="****">
+    <!-- autocomplete="new-password" stops browsers prefilling saved account passwords -->
+    <input type="password" id="studentPin" maxlength="4"
+           inputmode="numeric" placeholder="****"
+           autocomplete="new-password">
 
     <button id="chargeBtn" type="button" onclick="processCheckout()">Charge Student Wallet</button>
-    <button id="balanceBtn" type="button" onclick="checkBalanceOnly()" style="background:#3b82f6; margin-top:10px;">
+    <button id="balanceBtn" type="button" onclick="checkBalanceOnly()">
         Check Balance Only (Requires PIN)
     </button>
+
+    <!-- Clear / Next Student — appears after any completed transaction -->
+    <button id="clearBtn" type="button" onclick="resetForNextStudent()">
+        ✕ Clear / Next Student
+    </button>
+
     <div id="alertBox" class="alert"></div>
-    <div id="balanceBox" class="alert" style="display:none;"></div>
 </div>
 
 <script>
+    /* ── CSRF helper ───────────────────────────────────────────────────── */
     function getCookie(name) {
-        let cookieValue = null;
-        if (document.cookie && document.cookie !== "") {
-            const cookies = document.cookie.split(";");
-            for (let i = 0; i < cookies.length; i++) {
-                const cookie = cookies[i].trim();
-                if (cookie.substring(0, name.length + 1) === `${name}=`) {
-                    cookieValue = decodeURIComponent(cookie.substring(name.length + 1));
-                    break;
-                }
+        let v = null;
+        if (document.cookie) {
+            for (const c of document.cookie.split(";")) {
+                const t = c.trim();
+                if (t.startsWith(name + "=")) { v = decodeURIComponent(t.slice(name.length + 1)); break; }
             }
         }
-        if (!cookieValue && name === "csrftoken") {
-            const tokenInput = document.querySelector("[name=csrfmiddlewaretoken]");
-            if (tokenInput) cookieValue = tokenInput.value;
+        if (!v && name === "csrftoken") {
+            const el = document.querySelector("[name=csrfmiddlewaretoken]");
+            if (el) v = el.value;
         }
-        return cookieValue || "";
+        return v || "";
     }
 
+    /* ── Idempotency key (new per transaction) ─────────────────────────── */
     function generateIdempotencyKey() {
-        if (window.crypto && typeof window.crypto.randomUUID === "function") {
-            return window.crypto.randomUUID();
-        }
-        return `pos-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+        return window.crypto?.randomUUID?.() || `pos-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
     }
-
     let pendingIdempotencyKey = generateIdempotencyKey();
+    function resetCheckoutKey() { pendingIdempotencyKey = generateIdempotencyKey(); }
 
-    function resetCheckoutKey() {
-        pendingIdempotencyKey = generateIdempotencyKey();
-    }
-
+    /* ── QR scanner ────────────────────────────────────────────────────── */
     function onScanSuccess(decodedText) {
         scannedId.value = decodedText.trim();
         resetCheckoutKey();
         fetchStudentInfo();
     }
-
     const html5QrcodeScanner = new Html5QrcodeScanner("reader", { fps: 10, qrbox: 220 });
     html5QrcodeScanner.render(onScanSuccess);
 
-    let searchTimer = null;
-    let selectedStudent = { name: "", classStream: "" };
-    const nameSearch = document.getElementById("nameSearch");
-    const searchResults = document.getElementById("searchResults");
-    const scannedId = document.getElementById("scannedId");
-    const orderAmount = document.getElementById("orderAmount");
+    /* ── DOM refs ──────────────────────────────────────────────────────── */
+    const nameSearch          = document.getElementById("nameSearch");
+    const searchResults       = document.getElementById("searchResults");
+    const scannedId           = document.getElementById("scannedId");
+    const orderAmount         = document.getElementById("orderAmount");
     const confirmChargeBanner = document.getElementById("confirmChargeBanner");
+    const alertBox            = document.getElementById("alertBox");
+    const clearBtn            = document.getElementById("clearBtn");
 
+    /* ── State ─────────────────────────────────────────────────────────── */
+    let selectedStudent = { name: "", classStream: "" };
+
+    /* ── Auto-focus CanteenPay code on load (USB/BT scanner ready) ─────── */
+    scannedId.focus();
+
+    /* ── Confirm-charge banner ─────────────────────────────────────────── */
     function updateConfirmChargeBanner() {
         const amountVal = Number(orderAmount.value);
         if (selectedStudent.name && amountVal > 0) {
-            const classText = selectedStudent.classStream ? ` (${selectedStudent.classStream})` : "";
+            const cls = selectedStudent.classStream ? ` (${selectedStudent.classStream})` : "";
             confirmChargeBanner.textContent =
-                `Confirm Charge: UGX ${amountVal.toLocaleString()} for ${selectedStudent.name}${classText}`;
+                `⚠ Confirm Charge: UGX ${amountVal.toLocaleString()} to ${selectedStudent.name}${cls}`;
             confirmChargeBanner.style.display = "block";
         } else {
             confirmChargeBanner.textContent = "";
@@ -133,76 +247,46 @@
         }
     }
 
-    scannedId.focus();
+    /* ── Input listeners ───────────────────────────────────────────────── */
     scannedId.addEventListener("input", () => {
         resetCheckoutKey();
         selectedStudent = { name: "", classStream: "" };
         updateConfirmChargeBanner();
     });
+    scannedId.addEventListener("change", fetchStudentInfo);
+    scannedId.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); fetchStudentInfo(); } });
+
     orderAmount.addEventListener("input", () => {
         resetCheckoutKey();
         updateConfirmChargeBanner();
     });
-    scannedId.addEventListener("change", fetchStudentInfo);
-    scannedId.addEventListener("keydown", (event) => {
-        if (event.key === "Enter") {
-            event.preventDefault();
-            fetchStudentInfo();
-        }
-    });
 
+    /* ── Name search ───────────────────────────────────────────────────── */
+    let searchTimer = null;
     nameSearch.addEventListener("input", () => {
         clearTimeout(searchTimer);
-        const query = nameSearch.value.trim();
-        if (query.length < 2) {
-            searchResults.innerHTML = "";
-            return;
-        }
-        searchTimer = setTimeout(() => searchStudents(query), 250);
+        const q = nameSearch.value.trim();
+        if (q.length < 2) { searchResults.innerHTML = ""; return; }
+        searchTimer = setTimeout(() => searchStudents(q), 250);
     });
 
     async function searchStudents(query) {
         const res = await fetch(`/api/pos/students/search/?q=${encodeURIComponent(query)}`);
-        if (!res.ok) {
-            searchResults.innerHTML = "";
-            return;
-        }
-        const data = await res.json();
         searchResults.innerHTML = "";
+        if (!res.ok) return;
+        const data = await res.json();
         (data.results || []).forEach((row) => {
-            const button = document.createElement("button");
-            button.type = "button";
+            const btn = document.createElement("button");
+            btn.type = "button";
             const title = document.createElement("strong");
             title.textContent = `${row.full_name} — ${row.class_stream || "No class"}`;
             const meta = document.createElement("span");
             meta.textContent = `${row.student_reg_no} · ${row["school__name"] || ""}`;
-            button.appendChild(title);
-            button.appendChild(meta);
-            button.addEventListener("click", () => selectStudent(row));
-            searchResults.appendChild(button);
+            btn.appendChild(title);
+            btn.appendChild(meta);
+            btn.addEventListener("click", () => selectStudent(row));
+            searchResults.appendChild(btn);
         });
-    }
-
-    function showStudentBanner(titleText, subtitleText, isError) {
-        const infoDiv = document.getElementById("studentInfo");
-        infoDiv.style.display = "block";
-        infoDiv.innerHTML = "";
-        if (isError) {
-            const errSpan = document.createElement("span");
-            errSpan.style.color = "#fca5a5";
-            errSpan.textContent = titleText;
-            infoDiv.appendChild(errSpan);
-            return;
-        }
-        const strongEl = document.createElement("strong");
-        strongEl.textContent = titleText;
-        const br = document.createElement("br");
-        const hintEl = document.createElement("span");
-        hintEl.style.color = "#10b981";
-        hintEl.textContent = subtitleText;
-        infoDiv.appendChild(strongEl);
-        infoDiv.appendChild(br);
-        infoDiv.appendChild(hintEl);
     }
 
     function selectStudent(row) {
@@ -220,23 +304,38 @@
         document.getElementById("studentPin").focus();
     }
 
-    async function fetchStudentInfo() {
-        const regNo = scannedId.value.trim();
-        if (!regNo) {
-            selectedStudent = { name: "", classStream: "" };
-            updateConfirmChargeBanner();
+    /* ── Student info banner ───────────────────────────────────────────── */
+    function showStudentBanner(titleText, subtitleText, isError) {
+        const infoDiv = document.getElementById("studentInfo");
+        infoDiv.style.display = "block";
+        infoDiv.innerHTML = "";
+        if (isError) {
+            const s = document.createElement("span");
+            s.style.color = "#fca5a5";
+            s.textContent = titleText;
+            infoDiv.appendChild(s);
             return;
         }
+        const strong = document.createElement("strong");
+        strong.textContent = titleText;
+        const hint = document.createElement("span");
+        hint.style.cssText = "display:block; color:#10b981; margin-top:4px; font-size:0.88rem;";
+        hint.textContent = subtitleText;
+        infoDiv.appendChild(strong);
+        infoDiv.appendChild(hint);
+    }
 
-        const res = await fetch(`/api/student/lookup/?reg_no=${encodeURIComponent(regNo)}`);
+    async function fetchStudentInfo() {
+        const regNo = scannedId.value.trim();
+        if (!regNo) { selectedStudent = { name: "", classStream: "" }; updateConfirmChargeBanner(); return; }
+        const res  = await fetch(`/api/student/lookup/?reg_no=${encodeURIComponent(regNo)}`);
         const data = await res.json();
-
         if (res.ok) {
             selectedStudent = { name: data.full_name || "", classStream: data.class_stream || "" };
             updateConfirmChargeBanner();
-            const classLabel = data.class_stream ? ` — ${data.class_stream}` : "";
+            const cls = data.class_stream ? ` — ${data.class_stream}` : "";
             showStudentBanner(
-                `${data.full_name}${classLabel} (${data.school})`,
+                `${data.full_name}${cls} (${data.school})`,
                 "Code verified — student enters their 4-digit PIN",
                 false
             );
@@ -247,112 +346,114 @@
         }
     }
 
+    /* ── Reset / Next Student ──────────────────────────────────────────── */
+    function resetForNextStudent() {
+        scannedId.value = "";
+        orderAmount.value = "";
+        document.getElementById("itemsNote").value = "";
+        document.getElementById("studentPin").value = "";
+        document.getElementById("studentInfo").style.display = "none";
+        alertBox.style.display = "none";
+        clearBtn.style.display = "none";
+        selectedStudent = { name: "", classStream: "" };
+        updateConfirmChargeBanner();
+        resetCheckoutKey();
+        nameSearch.value = "";
+        searchResults.innerHTML = "";
+        scannedId.focus();
+    }
+
+    /* ── Balance check ─────────────────────────────────────────────────── */
     async function checkBalanceOnly() {
-        const alertBox = document.getElementById("alertBox");
         const balanceBtn = document.getElementById("balanceBtn");
         const payload = {
             student_reg_no: scannedId.value.trim(),
             pin: document.getElementById("studentPin").value.trim()
         };
-
         if (!payload.student_reg_no || !payload.pin) {
-            alertBox.style.display = "block";
-            alertBox.className = "alert err";
-            alertBox.innerText = "Scan the CanteenPay card, type the code, or pick a name, then enter the 4-digit PIN.";
+            showAlert("err", "Scan the CanteenPay card, type the code, or pick a name, then enter the 4-digit PIN.");
             return;
         }
-
         balanceBtn.disabled = true;
         try {
-            const res = await fetch("/api/student/balance/", {
+            const res  = await fetch("/api/student/balance/", {
                 method: "POST",
-                headers: {
-                    "Content-Type": "application/json",
-                    "X-CSRFToken": getCookie("csrftoken")
-                },
+                headers: { "Content-Type": "application/json", "X-CSRFToken": getCookie("csrftoken") },
                 body: JSON.stringify(payload)
             });
             const data = await res.json();
-
-            alertBox.style.display = "block";
             if (res.ok) {
-                alertBox.className = "alert ok";
-                alertBox.innerText = `${data.student_name}\nWallet Balance: UGX ${Number(data.wallet_balance).toLocaleString()}\nAvailable to Spend Today: UGX ${Number(data.remaining_daily_limit).toLocaleString()}`;
+                showAlert("ok",
+                    `${data.student_name}\n` +
+                    `Wallet Balance: UGX ${Number(data.wallet_balance).toLocaleString()}\n` +
+                    `Available to Spend Today: UGX ${Number(data.remaining_daily_limit).toLocaleString()}`
+                );
                 document.getElementById("studentPin").value = "";
-                scannedId.focus();
+                clearBtn.style.display = "block";
             } else {
-                alertBox.className = "alert err";
-                alertBox.innerText = data.error || "Could not verify PIN.";
+                showAlert("err", data.error || "Could not verify PIN.");
             }
-        } catch (err) {
-            alertBox.style.display = "block";
-            alertBox.className = "alert err";
-            alertBox.innerText = "Network error while checking balance.";
+        } catch {
+            showAlert("err", "Network error while checking balance.");
         } finally {
             balanceBtn.disabled = false;
         }
     }
 
+    /* ── Checkout ──────────────────────────────────────────────────────── */
     async function processCheckout() {
-        const alertBox = document.getElementById("alertBox");
         const chargeBtn = document.getElementById("chargeBtn");
         const payload = {
             student_reg_no: scannedId.value.trim(),
-            amount: orderAmount.value,
-            items_note: document.getElementById("itemsNote").value.trim(),
-            pin: document.getElementById("studentPin").value.trim(),
+            amount:         orderAmount.value,
+            items_note:     document.getElementById("itemsNote").value.trim(),
+            pin:            document.getElementById("studentPin").value.trim(),
             idempotency_key: pendingIdempotencyKey
         };
-
         if (!payload.student_reg_no || !payload.amount || !payload.pin) {
-            alertBox.style.display = "block";
-            alertBox.className = "alert err";
-            alertBox.innerText = "Enter student code, purchase amount, and 4-digit PIN.";
+            showAlert("err", "Enter student code, purchase amount, and 4-digit PIN.");
             return;
         }
-
         chargeBtn.disabled = true;
-        chargeBtn.innerText = "Processing...";
+        chargeBtn.innerText = "Processing…";
         try {
-            const res = await fetch("/api/canteen/checkout/", {
+            const res  = await fetch("/api/canteen/checkout/", {
                 method: "POST",
-                headers: {
-                    "Content-Type": "application/json",
-                    "X-CSRFToken": getCookie("csrftoken")
-                },
+                headers: { "Content-Type": "application/json", "X-CSRFToken": getCookie("csrftoken") },
                 body: JSON.stringify(payload)
             });
             const data = await res.json();
-
-            alertBox.style.display = "block";
             if (res.ok) {
-                alertBox.className = "alert ok";
-                alertBox.innerText = `APPROVED! New Balance: UGX ${Number(data.new_balance).toLocaleString()}`;
+                showAlert("ok", `✅ APPROVED!  New Balance: UGX ${Number(data.new_balance).toLocaleString()}`);
                 orderAmount.value = "";
                 document.getElementById("itemsNote").value = "";
                 document.getElementById("studentPin").value = "";
                 resetCheckoutKey();
                 updateConfirmChargeBanner();
-                fetchStudentInfo();
-                scannedId.focus();
+                fetchStudentInfo();          // refresh student info card with new balance hint
+                clearBtn.style.display = "block";
             } else {
-                alertBox.className = "alert err";
                 let errMsg = data.error || "Transaction Declined";
                 if (data.remaining_daily_limit !== undefined) {
-                    errMsg += ` Remaining today: UGX ${Number(data.remaining_daily_limit).toLocaleString()}.`;
+                    errMsg += `  Remaining today: UGX ${Number(data.remaining_daily_limit).toLocaleString()}.`;
                 } else if (data.current_balance !== undefined) {
-                    errMsg += ` Current balance: UGX ${Number(data.current_balance).toLocaleString()}.`;
+                    errMsg += `  Current balance: UGX ${Number(data.current_balance).toLocaleString()}.`;
                 }
-                alertBox.innerText = errMsg;
+                showAlert("err", errMsg);
             }
-        } catch (err) {
-            alertBox.style.display = "block";
-            alertBox.className = "alert err";
-            alertBox.innerText = "Network error. Please tap Charge again to retry safely.";
+        } catch {
+            showAlert("err", "Network error. Please tap Charge again to retry safely.");
         } finally {
             chargeBtn.disabled = false;
             chargeBtn.innerText = "Charge Student Wallet";
         }
+    }
+
+    /* ── Alert helper ──────────────────────────────────────────────────── */
+    function showAlert(type, msg) {
+        alertBox.style.display = "block";
+        alertBox.className = `alert ${type}`;
+        alertBox.innerText = msg;
     }
 </script>
 </body>

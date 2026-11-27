@@ -12,7 +12,9 @@ class CanteenPayProductionTests(TestCase):
             username="canteen_staff", password="StrongPassword123!"
         )
         self.school = School.objects.create(
-            name="Kampala High School", daily_spend_limit=Decimal("5000.00")
+            name="Kampala High School",
+            code_prefix="KHS",
+            daily_spend_limit=Decimal("5000.00"),
         )
         self.student = Student.objects.create(
             school=self.school,

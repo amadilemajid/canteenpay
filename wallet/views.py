@@ -1,11 +1,14 @@
+import base64
+import io
 import uuid
 import json
+import qrcode
 from decimal import Decimal
 from django.conf import settings
 from django.contrib.auth.decorators import login_required
 from django.contrib.admin.views.decorators import staff_member_required
 from django.db import transaction
-from django.db.models import Sum, Count
+from django.db.models import Sum, Count, Q
 from django.http import JsonResponse
 from django.shortcuts import render
 from django.utils import timezone
@@ -52,7 +55,7 @@ def canteen_checkout(request):
             student = (
                 Student.objects.select_for_update()
                 .select_related("school")
-                .get(student_reg_no=reg_no, is_active=True)
+                .get(student_reg_no__iexact=reg_no, is_active=True)
             )
 
             # 1. Verify 4-digit PIN
@@ -357,7 +360,7 @@ def verify_parent_topup(request):
 @require_POST
 def check_student_balance(request):
     """
-    Allows a student at the canteen counter to scan their ID card
+    Allows a student at the canteen counter to scan their CanteenPay card
     and enter their 4-digit PIN to check their balance and daily limit.
     """
     try:
@@ -411,6 +414,77 @@ def canteen_pos_page(request):
     return render(request, "wallet/canteen_pos.html")
 
 
+@login_required(login_url="/admin/login/")
+@require_GET
+def pos_student_search(request):
+    """
+    Logged-in till lookup by wallet code or student name.
+    The public parent page stays code-only and does not use this endpoint.
+    """
+    query = (request.GET.get("q") or "").strip()
+    if len(query) < 2:
+        return JsonResponse({"results": []})
+
+    students = (
+        Student.objects.filter(is_active=True)
+        .filter(Q(student_reg_no__icontains=query) | Q(full_name__icontains=query))
+        .select_related("school")
+        .order_by("full_name")[:15]
+    )
+    return JsonResponse(
+        {
+            "results": [
+                {
+                    "student_reg_no": student.student_reg_no,
+                    "full_name": student.full_name,
+                    "class_stream": student.class_stream,
+                    "school__name": student.school.name,
+                }
+                for student in students
+            ]
+        }
+    )
+
+
+def wallet_card_pages(students, page_size=8):
+    """A4 sheets of 8 laminated wallet cards. QR payload is the wallet code only."""
+    cards = []
+    for student in students:
+        qr = qrcode.QRCode(box_size=8, border=1)
+        qr.add_data(student.student_reg_no)
+        qr.make(fit=True)
+        image = qr.make_image(fill_color="black", back_color="white")
+        buffer = io.BytesIO()
+        image.save(buffer, format="PNG")
+        cards.append(
+            {
+                "school_name": student.school.name,
+                "full_name": student.full_name,
+                "class_stream": student.class_stream,
+                "student_reg_no": student.student_reg_no,
+                "qr_base64": base64.b64encode(buffer.getvalue()).decode("utf-8"),
+            }
+        )
+    return [cards[index : index + page_size] for index in range(0, len(cards), page_size)]
+
+
+@staff_member_required
+def wallet_cards_page(request):
+    students = (
+        Student.objects.filter(is_active=True)
+        .select_related("school")
+        .order_by("school__name", "class_stream", "full_name")
+    )
+    school_id = (request.GET.get("school") or "").strip()
+    if school_id:
+        students = students.filter(school_id=school_id)
+    return render(
+        request,
+        "wallet/wallet_cards.html",
+        {"pages": wallet_card_pages(students)},
+    )
+
+
 @never_cache
 def policies_page(request):
     return render(request, "wallet/policies.html")
@@ -427,6 +501,7 @@ def lookup_student(request):
             {
                 "student_reg_no": student.student_reg_no,
                 "full_name": student.full_name,
+                "class_stream": student.class_stream,
                 "school": student.school.name,
                 "wallet_balance": str(student.wallet_balance),
             },

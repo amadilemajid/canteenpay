@@ -1,26 +1,34 @@
 import csv
 import io
-import base64
-import qrcode
+import secrets
+
 from django import forms
 from django.contrib import admin, messages
 from django.contrib.auth.hashers import make_password
-from django.shortcuts import render, redirect
+from django.shortcuts import render
 from django.urls import path
-from .models import School, Student, WalletTopUp, CanteenOrder
+
+from .models import CanteenOrder, School, Student, WalletTopUp
+from .sms_service import is_valid_phone, send_welcome_pin_sms
+from .views import wallet_card_pages
 
 
 class CsvImportForm(forms.Form):
     school = forms.ModelChoiceField(queryset=School.objects.all())
     csv_file = forms.FileField(
-        help_text="Columns required: student_reg_no, full_name, parent_phone, pin"
+        help_text=(
+            "Required columns: full_name, class_stream. "
+            "Optional: parent_phone, pin, student_reg_no. "
+            "School admission-number columns are ignored."
+        )
     )
 
 
 class StudentAdminForm(forms.ModelForm):
     pin = forms.CharField(
-        max_length=10, required=False,
-        help_text="Enter a new PIN to set or change it. Leave blank to keep existing."
+        max_length=10,
+        required=False,
+        help_text="Enter a new PIN to set or change it. Leave blank to keep the existing PIN.",
     )
 
     class Meta:
@@ -37,19 +45,47 @@ class StudentAdminForm(forms.ModelForm):
         return instance
 
 
+def _mint_pin():
+    return f"{secrets.randbelow(10000):04d}"
+
+
+def _normalized_row(row):
+    return {
+        (key or "").strip().lower(): (value or "").strip()
+        for key, value in row.items()
+        if key
+    }
+
+
+def _row_value(normalized, *keys):
+    for key in keys:
+        value = normalized.get(key, "")
+        if value:
+            return value
+    return ""
+
+
 @admin.register(School)
 class SchoolAdmin(admin.ModelAdmin):
-    list_display = ("name", "daily_spend_limit", "created_at")
+    list_display = ("name", "code_prefix", "daily_spend_limit", "created_at")
+    search_fields = ("name", "code_prefix")
 
 
 @admin.register(Student)
 class StudentAdmin(admin.ModelAdmin):
     form = StudentAdminForm
-    list_display = ("student_reg_no", "full_name", "school", "wallet_balance", "is_active")
-    search_fields = ("student_reg_no", "full_name", "parent_phone")
+    list_display = (
+        "student_reg_no",
+        "full_name",
+        "class_stream",
+        "school",
+        "wallet_balance",
+        "is_active",
+    )
+    search_fields = ("student_reg_no", "full_name", "class_stream", "parent_phone")
     list_filter = ("school", "is_active")
     exclude = ("pin_hash",)
-    actions = ["print_qr_stickers"]
+    actions = ["print_wallet_cards", "reset_pin_and_print_slip"]
     change_list_template = "admin/wallet/student_changelist.html"
 
     def get_urls(self):
@@ -68,44 +104,131 @@ class StudentAdmin(admin.ModelAdmin):
             form = CsvImportForm(request.POST, request.FILES)
             if form.is_valid():
                 school = form.cleaned_data["school"]
-                csv_file = request.FILES["csv_file"]
-                decoded_file = csv_file.read().decode("utf-8-sig")
+                try:
+                    decoded_file = request.FILES["csv_file"].read().decode("utf-8-sig")
+                except UnicodeDecodeError:
+                    self.message_user(
+                        request,
+                        "Could not read that file as UTF-8. Save the CSV as UTF-8 and try again.",
+                        level=messages.ERROR,
+                    )
+                    return render(
+                        request,
+                        "admin/wallet/csv_form.html",
+                        {
+                            **self.admin_site.each_context(request),
+                            "form": form,
+                            "title": "Bulk Import Students via CSV",
+                        },
+                    )
+
                 reader = csv.DictReader(io.StringIO(decoded_file))
+                fieldnames = [
+                    (name or "").strip().lower() for name in (reader.fieldnames or [])
+                ]
+                has_name = "full_name" in fieldnames or "name" in fieldnames
+                has_class = "class_stream" in fieldnames or "class" in fieldnames
+                if not has_name or not has_class:
+                    self.message_user(
+                        request,
+                        "CSV must include full_name and class_stream columns. parent_phone and pin are optional.",
+                        level=messages.ERROR,
+                    )
+                    return render(
+                        request,
+                        "admin/wallet/csv_form.html",
+                        {
+                            **self.admin_site.each_context(request),
+                            "form": form,
+                            "title": "Bulk Import Students via CSV",
+                        },
+                    )
 
                 created_count = 0
                 updated_count = 0
+                slips = []
+                errors = []
 
                 for row in reader:
-                    reg_no = row["student_reg_no"].strip()
-                    full_name = row["full_name"].strip()
-                    parent_phone = row["parent_phone"].strip()
-                    raw_pin = str(row.get("pin", "1234")).strip()
+                    line_no = reader.line_num
+                    try:
+                        normalized = _normalized_row(row)
+                        if not any(normalized.values()):
+                            continue
 
-                    student, created = Student.objects.get_or_create(
-                        student_reg_no=reg_no,
-                        defaults={
-                            "school": school,
-                            "full_name": full_name,
-                            "parent_phone": parent_phone,
-                        },
-                    )
-                    if not created:
-                        student.school = school
-                        student.full_name = full_name
-                        student.parent_phone = parent_phone
-                        updated_count += 1
-                    else:
+                        full_name = _row_value(normalized, "full_name", "name")
+                        class_stream = _row_value(normalized, "class_stream", "class")
+                        parent_phone = _row_value(
+                            normalized, "parent_phone", "phone", "parent_mobile"
+                        )
+                        raw_pin = _row_value(normalized, "pin")
+                        reg_no = _row_value(normalized, "student_reg_no").upper()
+
+                        if not full_name or not class_stream:
+                            raise ValueError("full_name and class_stream are required.")
+
+                        student = None
+                        if reg_no:
+                            student = Student.objects.filter(
+                                student_reg_no__iexact=reg_no
+                            ).first()
+                        if student is None:
+                            student = Student.objects.filter(
+                                school=school,
+                                full_name__iexact=full_name,
+                                class_stream__iexact=class_stream,
+                            ).first()
+
+                        if student is not None:
+                            if is_valid_phone(parent_phone) and student.parent_phone != parent_phone:
+                                student.parent_phone = parent_phone
+                                student.save(update_fields=["parent_phone"])
+                            updated_count += 1
+                            continue
+
+                        minted_pin = raw_pin or _mint_pin()
+                        student = Student(
+                            school=school,
+                            student_reg_no=reg_no,
+                            full_name=full_name,
+                            class_stream=class_stream,
+                            parent_phone=parent_phone if is_valid_phone(parent_phone) else "",
+                        )
+                        student.set_pin(minted_pin)
+                        student.save()
                         created_count += 1
+                        slips.append(
+                            {
+                                "full_name": student.full_name,
+                                "class_stream": student.class_stream,
+                                "student_reg_no": student.student_reg_no,
+                                "pin": minted_pin,
+                            }
+                        )
+                        if is_valid_phone(student.parent_phone):
+                            send_welcome_pin_sms(
+                                parent_phone=student.parent_phone,
+                                student_name=student.full_name,
+                                class_stream=student.class_stream,
+                                code=student.student_reg_no,
+                                pin=minted_pin,
+                            )
+                    except Exception as exc:
+                        errors.append({"line": line_no, "message": str(exc)})
 
-                    student.set_pin(raw_pin)
-                    student.save()
-
-                self.message_user(
+                return render(
                     request,
-                    f"Import complete: {created_count} created, {updated_count} updated.",
-                    level=messages.SUCCESS,
+                    "wallet/pin_slip.html",
+                    {
+                        **self.admin_site.each_context(request),
+                        "title": "One-Time Take-Home PIN Slips",
+                        "slips": slips,
+                        "errors": errors,
+                        "created_count": created_count,
+                        "updated_count": updated_count,
+                        "single": False,
+                    },
                 )
-                return redirect("..")
         else:
             form = CsvImportForm()
 
@@ -116,32 +239,51 @@ class StudentAdmin(admin.ModelAdmin):
         }
         return render(request, "admin/wallet/csv_form.html", context)
 
-    @admin.action(description="Print QR Sticker Sheet for selected students")
-    def print_qr_stickers(self, request, queryset):
-        stickers = []
-        for student in queryset:
-            qr = qrcode.QRCode(box_size=6, border=2)
-            qr.add_data(student.student_reg_no)
-            qr.make(fit=True)
-            img = qr.make_image(fill_color="black", back_color="white")
+    @admin.action(description="Print CanteenPay Wallet Cards")
+    def print_wallet_cards(self, request, queryset):
+        students = queryset.select_related("school")
+        return render(
+            request,
+            "wallet/wallet_cards.html",
+            {"pages": wallet_card_pages(students)},
+        )
 
-            buffer = io.BytesIO()
-            img.save(buffer, format="PNG")
-            qr_base64 = base64.b64encode(buffer.getvalue()).decode("utf-8")
-
-            stickers.append(
+    @admin.action(description="Reset PIN & Print Single PIN Slip")
+    def reset_pin_and_print_slip(self, request, queryset):
+        slips = []
+        for student in queryset.select_related("school"):
+            minted_pin = _mint_pin()
+            student.set_pin(minted_pin)
+            student.save(update_fields=["pin_hash"])
+            if is_valid_phone(student.parent_phone):
+                send_welcome_pin_sms(
+                    parent_phone=student.parent_phone,
+                    student_name=student.full_name,
+                    class_stream=student.class_stream,
+                    code=student.student_reg_no,
+                    pin=minted_pin,
+                )
+            slips.append(
                 {
-                    "reg_no": student.student_reg_no,
                     "full_name": student.full_name,
-                    "school": student.school.name,
-                    "qr_base64": qr_base64,
+                    "class_stream": student.class_stream,
+                    "student_reg_no": student.student_reg_no,
+                    "pin": minted_pin,
                 }
             )
 
         return render(
             request,
-            "admin/wallet/qr_sticker_sheet.html",
-            {"stickers": stickers},
+            "wallet/pin_slip.html",
+            {
+                **self.admin_site.each_context(request),
+                "title": "One-Time PIN Slip",
+                "slips": slips,
+                "errors": [],
+                "created_count": len(slips),
+                "updated_count": 0,
+                "single": True,
+            },
         )
 
 

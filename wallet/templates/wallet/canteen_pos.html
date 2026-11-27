@@ -14,6 +14,9 @@
         input { width: 100%; padding: 12px; border-radius: 8px; border: 1px solid #374151; background: #374151; color: #fff; font-size: 1.1rem; box-sizing: border-box; }
         button { width: 100%; padding: 14px; background: #10b981; color: #fff; font-weight: 700; border: none; border-radius: 8px; font-size: 1.1rem; margin-top: 16px; cursor: pointer; }
         .info-card { background: #374151; padding: 12px; border-radius: 8px; margin-top: 12px; display: none; }
+        .results { margin-top: 6px; border-radius: 8px; overflow: hidden; }
+        .results button { width: 100%; text-align: left; margin: 0; border-radius: 0; background: #374151; font-size: 0.95rem; font-weight: 600; padding: 10px 12px; border-bottom: 1px solid #4b5563; }
+        .results button span { display: block; color: #9ca3af; font-size: 0.8rem; font-weight: 500; }
         .alert { padding: 12px; border-radius: 8px; margin-top: 14px; font-weight: 600; text-align: center; display: none; }
         .ok { background: #065f46; color: #a7f3d0; }
         .err { background: #7f1d1d; color: #fecaca; }
@@ -24,8 +27,12 @@
     <h2>Canteen QR Checkout</h2>
     <div id="reader"></div>
 
-    <label for="scannedId">Student ID (Auto-filled by QR Scan)</label>
-    <input type="text" id="scannedId" placeholder="Scan ID card or type ID" onchange="fetchStudentInfo()">
+    <label for="nameSearch">Search by student name</label>
+    <input type="text" id="nameSearch" placeholder="Type a name, then tap Full Name — Class" autocomplete="off">
+    <div id="searchResults" class="results"></div>
+
+    <label for="scannedId">CanteenPay code (scan the card or type it)</label>
+    <input type="text" id="scannedId" placeholder="e.g. YMB-0042" autocomplete="off">
 
     <div id="studentInfo" class="info-card"></div>
 
@@ -55,6 +62,61 @@
     const html5QrcodeScanner = new Html5QrcodeScanner("reader", { fps: 10, qrbox: 220 });
     html5QrcodeScanner.render(onScanSuccess);
 
+    let searchTimer = null;
+    const nameSearch = document.getElementById("nameSearch");
+    const searchResults = document.getElementById("searchResults");
+    const scannedId = document.getElementById("scannedId");
+
+    scannedId.addEventListener("change", fetchStudentInfo);
+    scannedId.addEventListener("keydown", (event) => {
+        if (event.key === "Enter") {
+            event.preventDefault();
+            fetchStudentInfo();
+        }
+    });
+
+    nameSearch.addEventListener("input", () => {
+        clearTimeout(searchTimer);
+        const query = nameSearch.value.trim();
+        if (query.length < 2) {
+            searchResults.innerHTML = "";
+            return;
+        }
+        searchTimer = setTimeout(() => searchStudents(query), 250);
+    });
+
+    async function searchStudents(query) {
+        const res = await fetch(`/api/pos/students/search/?q=${encodeURIComponent(query)}`);
+        if (!res.ok) {
+            searchResults.innerHTML = "";
+            return;
+        }
+        const data = await res.json();
+        searchResults.innerHTML = "";
+        (data.results || []).forEach((row) => {
+            const button = document.createElement("button");
+            button.type = "button";
+            const title = document.createElement("strong");
+            title.textContent = `${row.full_name} — ${row.class_stream || "No class"}`;
+            const meta = document.createElement("span");
+            meta.textContent = `${row.student_reg_no} · ${row["school__name"] || ""}`;
+            button.appendChild(title);
+            button.appendChild(meta);
+            button.addEventListener("click", () => selectStudent(row));
+            searchResults.appendChild(button);
+        });
+    }
+
+    function selectStudent(row) {
+        scannedId.value = row.student_reg_no;
+        nameSearch.value = "";
+        searchResults.innerHTML = "";
+        const infoDiv = document.getElementById("studentInfo");
+        infoDiv.style.display = "block";
+        infoDiv.innerHTML = `<strong>${row.full_name} — ${row.class_stream || "No class"}</strong><br><span style="color:#10b981;">${row.student_reg_no} · student enters their 4-digit PIN</span>`;
+        document.getElementById("studentPin").focus();
+    }
+
     async function fetchStudentInfo() {
         const regNo = document.getElementById("scannedId").value.trim();
         const infoDiv = document.getElementById("studentInfo");
@@ -65,7 +127,8 @@
 
         infoDiv.style.display = "block";
         if (res.ok) {
-            infoDiv.innerHTML = `<strong>${data.full_name}</strong> (${data.school})<br><span style="color:#10b981;">ID Verified — Enter PIN to buy or check balance</span>`;
+            const classLabel = data.class_stream ? ` — ${data.class_stream}` : "";
+            infoDiv.innerHTML = `<strong>${data.full_name}${classLabel}</strong> (${data.school})<br><span style="color:#10b981;">Code verified — student enters their 4-digit PIN</span>`;
         } else {
             infoDiv.innerHTML = `<span style="color:#fca5a5;">${data.error}</span>`;
         }
@@ -81,7 +144,7 @@
         if (!payload.student_reg_no || !payload.pin) {
             alertBox.style.display = "block";
             alertBox.className = "alert err";
-            alertBox.innerText = "Please scan Student ID and enter 4-digit PIN first.";
+            alertBox.innerText = "Scan the CanteenPay card, type the code, or pick a name, then enter the 4-digit PIN.";
             return;
         }
 

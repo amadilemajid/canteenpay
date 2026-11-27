@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>CanteenPay | Wallet Cards</title>
+    <style>
+        @page { size: A4 portrait; margin: 8mm; }
+        body { font-family: Arial, sans-serif; margin: 0; background: #e5e7eb; color: #111827; }
+        .toolbar { padding: 12px 16px; }
+        .toolbar button { padding: 10px 16px; font-weight: 700; cursor: pointer; border: none; border-radius: 6px; background: #065f46; color: #fff; }
+        .page {
+            width: 194mm;
+            height: 281mm;
+            margin: 8mm auto;
+            background: #fff;
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            grid-template-rows: repeat(4, 1fr);
+            gap: 3mm;
+            padding: 3mm;
+            box-sizing: border-box;
+            page-break-after: always;
+            break-after: page;
+        }
+        .card {
+            border: 1.5px solid #065f46;
+            border-radius: 3mm;
+            padding: 3mm 3.5mm;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 3mm;
+            box-sizing: border-box;
+            overflow: hidden;
+            page-break-inside: avoid;
+        }
+        .meta { min-width: 0; }
+        .school { font-size: 8.5pt; font-weight: 700; color: #065f46; text-transform: uppercase; letter-spacing: 0.04em; }
+        .name { font-size: 12pt; font-weight: 700; margin-top: 1.5mm; line-height: 1.15; }
+        .stream { font-size: 9.5pt; margin-top: 1mm; color: #374151; }
+        .code { font-size: 16pt; font-weight: 800; font-family: Consolas, "Courier New", monospace; margin-top: 2mm; letter-spacing: 0.04em; }
+        .card img { width: 28mm; height: 28mm; flex: 0 0 auto; }
+        @media print {
+            body { background: #fff; }
+            .toolbar { display: none; }
+            .page { margin: 0; box-shadow: none; }
+        }
+    </style>
+</head>
+<body>
+    <div class="toolbar">
+        <button type="button" onclick="window.print()">Print wallet cards (8 per A4)</button>
+    </div>
+    {% for page in pages %}
+    <section class="page">
+        {% for card in page %}
+        <article class="card">
+            <div class="meta">
+                <div class="school">{{ card.school_name }}</div>
+                <div class="name">{{ card.full_name }}</div>
+                <div class="stream">{{ card.class_stream }}</div>
+                <div class="code">{{ card.student_reg_no }}</div>
+            </div>
+            <img src="data:image/png;base64,{{ card.qr_base64 }}" alt="{{ card.student_reg_no }}">
+        </article>
+        {% endfor %}
+    </section>
+    {% empty %}
+    <p style="padding:16px;">No students to print.</p>
+    {% endfor %}
+</body>
+</html>

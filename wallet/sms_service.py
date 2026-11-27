@@ -61,7 +61,12 @@ def send_topup_receipt_sms(
 
 
 def send_refund_receipt_sms(
-    parent_phone: str, student_name: str, amount_refunded: str, new_balance: str
+    parent_phone: str,
+    student_name: str,
+    amount_refunded: str,
+    new_balance: str,
+    reason: str = "",
+    order_ref: str = "",
 ):
     """Notifies the parent when a canteen order is refunded to the student's wallet."""
     if not is_valid_phone(parent_phone):
@@ -69,9 +74,59 @@ def send_refund_receipt_sms(
 
     amount_int = int(Decimal(str(amount_refunded)))
     balance_int = int(Decimal(str(new_balance)))
+    reason_part = f" Reason: {reason.strip()}." if reason and reason.strip() else ""
+    ref_part = f" Order Ref: {order_ref}." if order_ref else ""
     message = (
-        f"CanteenPay Refund: UGX {amount_int:,} has been refunded "
-        f"to {student_name}'s canteen wallet. New Balance: UGX {balance_int:,}."
+        f"CanteenPay Refund: UGX {amount_int:,} refunded to {student_name}'s "
+        f"canteen wallet.{reason_part} New Balance: UGX {balance_int:,}.{ref_part}"
+    )
+    return _send_sms(parent_phone, message)
+
+
+def send_canteen_purchase_sms(
+    parent_phone: str,
+    student_name: str,
+    amount_spent: str,
+    items_note: str,
+    new_balance: str,
+    order_ref: str = "",
+):
+    """Notifies the parent immediately when a student makes a canteen purchase."""
+    if not is_valid_phone(parent_phone):
+        return None
+
+    amount_int = int(Decimal(str(amount_spent)))
+    balance_int = int(Decimal(str(new_balance)))
+    item_part = f" ({items_note.strip()})" if items_note and items_note.strip() else ""
+    ref_part = f" Ref: {order_ref}." if order_ref else ""
+    message = (
+        f"CanteenPay Purchase: UGX {amount_int:,} spent by {student_name}{item_part}. "
+        f"New Balance: UGX {balance_int:,}.{ref_part}"
+    )
+    return _send_sms(parent_phone, message)
+
+
+def send_cash_topup_receipt_sms(
+    parent_phone: str,
+    student_name: str,
+    amount_deposited: str,
+    receipt_note: str,
+    new_balance: str,
+    recorded_by: str = "",
+    tx_ref: str = "",
+):
+    """Notifies the parent when physical cash is deposited at the school bursar desk."""
+    if not is_valid_phone(parent_phone):
+        return None
+
+    amount_int = int(Decimal(str(amount_deposited)))
+    balance_int = int(Decimal(str(new_balance)))
+    note_part = f" ({receipt_note.strip()})" if receipt_note and receipt_note.strip() else ""
+    by_part = f" Recorded by: {recorded_by}." if recorded_by else ""
+    ref_part = f" Ref: {tx_ref}." if tx_ref else ""
+    message = (
+        f"CanteenPay Cash Deposit: UGX {amount_int:,} credited to {student_name}'s "
+        f"canteen wallet{note_part}. New Balance: UGX {balance_int:,}.{by_part}{ref_part}"
     )
     return _send_sms(parent_phone, message)
 

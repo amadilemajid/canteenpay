@@ -88,7 +88,7 @@
 
     <div class="cash-box no-print">
         <h3>Bursar Cash-In Desk (Physical Cash Top-Up)</h3>
-        <form method="post" class="cash-form">
+        <form method="post" class="cash-form" onsubmit="const btn=this.querySelector('button[type=submit]'); if(btn.disabled) return false; btn.disabled=true; btn.innerText='Recording...';">
             {% csrf_token %}
             <input type="hidden" name="report_date" value="{{ report_date|date:'Y-m-d' }}">
             <div>

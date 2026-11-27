@@ -22,6 +22,18 @@
         .alert { padding: 12px; border-radius: 8px; margin-top: 14px; font-weight: 600; text-align: center; display: none; }
         .ok { background: #065f46; color: #a7f3d0; }
         .err { background: #7f1d1d; color: #fecaca; }
+        .confirm-banner {
+            display: none;
+            margin-top: 14px;
+            padding: 14px 12px;
+            border-radius: 8px;
+            background: #fef3c7;
+            color: #92400e;
+            border: 2px solid #f59e0b;
+            font-size: 1.05rem;
+            font-weight: 800;
+            text-align: center;
+        }
     </style>
 </head>
 <body>
@@ -44,6 +56,8 @@
 
     <label for="itemsNote">Items Bought (Optional)</label>
     <input type="text" id="itemsNote" placeholder="e.g. Chapati + Soda">
+
+    <div id="confirmChargeBanner" class="confirm-banner" role="status" aria-live="polite"></div>
 
     <label for="studentPin">Student 4-Digit PIN</label>
     <input type="password" id="studentPin" maxlength="4" inputmode="numeric" placeholder="****">
@@ -99,14 +113,36 @@
     html5QrcodeScanner.render(onScanSuccess);
 
     let searchTimer = null;
+    let selectedStudent = { name: "", classStream: "" };
     const nameSearch = document.getElementById("nameSearch");
     const searchResults = document.getElementById("searchResults");
     const scannedId = document.getElementById("scannedId");
     const orderAmount = document.getElementById("orderAmount");
+    const confirmChargeBanner = document.getElementById("confirmChargeBanner");
+
+    function updateConfirmChargeBanner() {
+        const amountVal = Number(orderAmount.value);
+        if (selectedStudent.name && amountVal > 0) {
+            const classText = selectedStudent.classStream ? ` (${selectedStudent.classStream})` : "";
+            confirmChargeBanner.textContent =
+                `Confirm Charge: UGX ${amountVal.toLocaleString()} for ${selectedStudent.name}${classText}`;
+            confirmChargeBanner.style.display = "block";
+        } else {
+            confirmChargeBanner.textContent = "";
+            confirmChargeBanner.style.display = "none";
+        }
+    }
 
     scannedId.focus();
-    scannedId.addEventListener("input", resetCheckoutKey);
-    orderAmount.addEventListener("input", resetCheckoutKey);
+    scannedId.addEventListener("input", () => {
+        resetCheckoutKey();
+        selectedStudent = { name: "", classStream: "" };
+        updateConfirmChargeBanner();
+    });
+    orderAmount.addEventListener("input", () => {
+        resetCheckoutKey();
+        updateConfirmChargeBanner();
+    });
     scannedId.addEventListener("change", fetchStudentInfo);
     scannedId.addEventListener("keydown", (event) => {
         if (event.key === "Enter") {
@@ -172,6 +208,8 @@
     function selectStudent(row) {
         scannedId.value = row.student_reg_no;
         resetCheckoutKey();
+        selectedStudent = { name: row.full_name || "", classStream: row.class_stream || "" };
+        updateConfirmChargeBanner();
         nameSearch.value = "";
         searchResults.innerHTML = "";
         showStudentBanner(
@@ -184,12 +222,18 @@
 
     async function fetchStudentInfo() {
         const regNo = scannedId.value.trim();
-        if (!regNo) return;
+        if (!regNo) {
+            selectedStudent = { name: "", classStream: "" };
+            updateConfirmChargeBanner();
+            return;
+        }
 
         const res = await fetch(`/api/student/lookup/?reg_no=${encodeURIComponent(regNo)}`);
         const data = await res.json();
 
         if (res.ok) {
+            selectedStudent = { name: data.full_name || "", classStream: data.class_stream || "" };
+            updateConfirmChargeBanner();
             const classLabel = data.class_stream ? ` — ${data.class_stream}` : "";
             showStudentBanner(
                 `${data.full_name}${classLabel} (${data.school})`,
@@ -197,6 +241,8 @@
                 false
             );
         } else {
+            selectedStudent = { name: "", classStream: "" };
+            updateConfirmChargeBanner();
             showStudentBanner(data.error || "Student ID not found.", "", true);
         }
     }
@@ -286,6 +332,7 @@
                 document.getElementById("itemsNote").value = "";
                 document.getElementById("studentPin").value = "";
                 resetCheckoutKey();
+                updateConfirmChargeBanner();
                 fetchStudentInfo();
                 scannedId.focus();
             } else {

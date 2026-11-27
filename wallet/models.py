@@ -5,7 +5,7 @@ from django.core.exceptions import ValidationError
 from django.db import models, transaction
 from django.contrib.auth.hashers import make_password, check_password
 
-from .sms_service import send_refund_receipt_sms, send_topup_receipt_sms
+from .sms_service import send_cash_topup_receipt_sms, send_refund_receipt_sms
 
 
 class School(models.Model):
@@ -197,12 +197,16 @@ class CanteenRefund(models.Model):
             student_name = student.full_name
             refund_amount_str = str(self.amount)
             new_balance_str = str(student.wallet_balance)
+            reason_copy = self.reason
+            order_ref = str(self.order_id)[:8].upper()
             transaction.on_commit(
                 lambda: send_refund_receipt_sms(
                     parent_phone=parent_phone,
                     student_name=student_name,
                     amount_refunded=refund_amount_str,
                     new_balance=new_balance_str,
+                    reason=reason_copy,
+                    order_ref=order_ref,
                 )
             )
 
@@ -245,14 +249,22 @@ class BursarCashTopUp(models.Model):
             parent_phone = student.parent_phone
             student_name = student.full_name
             amount_str = str(self.amount)
+            receipt_note_copy = self.receipt_note
             new_balance_str = str(student.wallet_balance)
+            recorded_by = (
+                (self.received_by.get_full_name() or self.received_by.username)
+                if self.received_by_id
+                else ""
+            )
             cash_ref = f"CASH-{str(self.id)[:8].upper()}"
             transaction.on_commit(
-                lambda: send_topup_receipt_sms(
+                lambda: send_cash_topup_receipt_sms(
                     parent_phone=parent_phone,
                     student_name=student_name,
-                    amount_credited=amount_str,
+                    amount_deposited=amount_str,
+                    receipt_note=receipt_note_copy,
                     new_balance=new_balance_str,
+                    recorded_by=recorded_by,
                     tx_ref=cash_ref,
                 )
             )

@@ -12,6 +12,7 @@ from django.conf import settings
 from django.contrib import messages
 from django.contrib.admin.views.decorators import staff_member_required
 from django.contrib.auth.decorators import login_required
+from django.core.cache import cache
 from django.core.exceptions import ValidationError
 from django.db import IntegrityError, transaction
 from django.db.models import Count, Q, Sum
@@ -36,6 +37,7 @@ from .models import (
     WalletTopUp,
 )
 from .sms_service import (
+    send_canteen_purchase_sms,
     send_pin_lockout_alert_sms,
 )
 
@@ -44,6 +46,15 @@ logger = logging.getLogger(__name__)
 PIN_MAX_ATTEMPTS = 5
 PIN_LOCKOUT_MINUTES = 15
 DOUBLE_TAP_WINDOW_SECONDS = 10
+LOOKUP_RATE_LIMIT = 20
+LOOKUP_RATE_WINDOW_SECONDS = 60
+
+
+def _client_ip(request) -> str:
+    xff = request.META.get("HTTP_X_FORWARDED_FOR", "")
+    if xff:
+        return xff.split(",")[0].strip() or "unknown"
+    return (request.META.get("REMOTE_ADDR") or "").strip() or "unknown"
 
 
 def normalize_ug_phone(phone: str) -> str:
@@ -235,6 +246,23 @@ def canteen_checkout(request):
                 idempotency_key=idempotency_key,
                 amount=amount,
                 items_note=items_note,
+            )
+
+            parent_phone = student.parent_phone
+            student_name = student.full_name
+            amount_str = str(order.amount)
+            items_copy = order.items_note
+            new_balance_str = str(student.wallet_balance)
+            order_ref = str(order.id)[:8].upper()
+            transaction.on_commit(
+                lambda: send_canteen_purchase_sms(
+                    parent_phone=parent_phone,
+                    student_name=student_name,
+                    amount_spent=amount_str,
+                    items_note=items_copy,
+                    new_balance=new_balance_str,
+                    order_ref=order_ref,
+                )
             )
 
         return JsonResponse(
@@ -594,6 +622,23 @@ def policies_page(request):
 
 @require_GET
 def lookup_student(request):
+    ip = _client_ip(request)
+    cache_key = f"lookup_rl:{ip}"
+    if cache.add(cache_key, 1, timeout=LOOKUP_RATE_WINDOW_SECONDS):
+        attempts = 1
+    else:
+        try:
+            attempts = cache.incr(cache_key)
+        except ValueError:
+            cache.set(cache_key, 1, timeout=LOOKUP_RATE_WINDOW_SECONDS)
+            attempts = 1
+
+    if attempts > LOOKUP_RATE_LIMIT:
+        return JsonResponse(
+            {"error": "Too many lookup attempts. Please wait a minute."},
+            status=429,
+        )
+
     reg_no = request.GET.get("reg_no", "").strip()
     try:
         student = Student.objects.select_related("school").get(
@@ -655,20 +700,33 @@ def bursar_daily_report(request):
             )
             return redirect(f"{request.path}?date={report_date:%Y-%m-%d}")
 
-        student = Student.objects.filter(
-            student_reg_no__iexact=reg_no, is_active=True
-        ).first()
-        if student is None:
-            messages.error(request, f"Active student '{reg_no}' was not found.")
-            return redirect(f"{request.path}?date={report_date:%Y-%m-%d}")
+        with transaction.atomic():
+            student = (
+                Student.objects.select_for_update()
+                .filter(student_reg_no__iexact=reg_no, is_active=True)
+                .first()
+            )
+            if student is None:
+                messages.error(request, f"Active student '{reg_no}' was not found.")
+                return redirect(f"{request.path}?date={report_date:%Y-%m-%d}")
 
-        cash_topup = BursarCashTopUp.objects.create(
-            student=student,
-            amount=amount,
-            receipt_note=receipt_note,
-            received_by=request.user,
-        )
-        student.refresh_from_db()
+            recent_cutoff = timezone.now() - timedelta(seconds=DOUBLE_TAP_WINDOW_SECONDS)
+            if BursarCashTopUp.objects.filter(
+                student=student, amount=amount, created_at__gte=recent_cutoff
+            ).exists():
+                messages.error(
+                    request,
+                    "Duplicate cash deposit detected. Wait 10 seconds before recording the same amount again.",
+                )
+                return redirect(f"{request.path}?date={report_date:%Y-%m-%d}")
+
+            cash_topup = BursarCashTopUp.objects.create(
+                student=student,
+                amount=amount,
+                receipt_note=receipt_note,
+                received_by=request.user,
+            )
+            student.refresh_from_db()
         messages.success(
             request,
             (

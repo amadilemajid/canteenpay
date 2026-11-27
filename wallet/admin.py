@@ -77,6 +77,15 @@ class SchoolAdmin(admin.ModelAdmin):
     list_display = ("name", "code_prefix", "daily_spend_limit", "created_at")
     search_fields = ("name", "code_prefix")
 
+    def get_readonly_fields(self, request, obj=None):
+        readonly = list(super().get_readonly_fields(request, obj=obj))
+        if not request.user.is_superuser:
+            if "subaccount_id" not in readonly:
+                readonly.append("subaccount_id")
+            if obj is not None and "code_prefix" not in readonly:
+                readonly.append("code_prefix")
+        return tuple(readonly)
+
 
 @admin.register(Student)
 class StudentAdmin(admin.ModelAdmin):
@@ -303,6 +312,24 @@ class StudentAdmin(admin.ModelAdmin):
 class WalletTopUpAdmin(admin.ModelAdmin):
     list_display = ("student", "amount", "platform_fee", "status", "created_at")
     list_filter = ("status",)
+    readonly_fields = (
+        "student",
+        "momo_reference_id",
+        "payer_phone",
+        "amount",
+        "platform_fee",
+        "status",
+        "created_at",
+    )
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
 
 
 @admin.register(CanteenOrder)
@@ -321,6 +348,27 @@ class CanteenRefundAdmin(admin.ModelAdmin):
         if not change and not obj.refunded_by:
             obj.refunded_by = request.user
         super().save_model(request, obj, form, change)
+
+    def has_module_permission(self, request):
+        return (
+            request.user.is_active
+            and request.user.is_staff
+            and super().has_module_permission(request)
+        )
+
+    def has_view_permission(self, request, obj=None):
+        return (
+            request.user.is_active
+            and request.user.is_staff
+            and super().has_view_permission(request, obj=obj)
+        )
+
+    def has_add_permission(self, request):
+        return (
+            request.user.is_active
+            and request.user.is_staff
+            and super().has_add_permission(request)
+        )
 
     def has_change_permission(self, request, obj=None):
         return False

@@ -3,12 +3,14 @@ from datetime import timedelta
 from decimal import Decimal
 from unittest.mock import patch
 
+from django.contrib import admin as django_admin
 from django.contrib.auth.hashers import check_password
-from django.contrib.auth.models import User
+from django.contrib.auth.models import Permission, User
+from django.core.cache import cache
 from django.core.exceptions import ValidationError
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.core.management import call_command
-from django.test import Client, TestCase, TransactionTestCase, override_settings
+from django.test import Client, RequestFactory, TestCase, TransactionTestCase, override_settings
 from django.utils import timezone
 
 from wallet import sms_service
@@ -693,6 +695,118 @@ class CanteenPayProductionTests(TestCase):
         self.assertIn(b"CanteenPay Card", notice_res.content)
         self.assertNotIn(b"School ID", notice_res.content)
 
+    def test_admin_subaccount_lock_and_refund_staff_restrictions(self):
+        rf = RequestFactory()
+        school_admin = django_admin.site._registry[School]
+        student_admin = django_admin.site._registry[Student]
+        topup_admin = django_admin.site._registry[WalletTopUp]
+        refund_admin = django_admin.site._registry[CanteenRefund]
+
+        # Non-superuser bursar sees subaccount_id as read-only; superuser can edit it
+        bursar_req = rf.get("/admin/wallet/school/")
+        bursar_req.user = self.bursar
+        self.assertIn(
+            "subaccount_id",
+            school_admin.get_readonly_fields(bursar_req, obj=self.school),
+        )
+        self.assertIn(
+            "code_prefix",
+            school_admin.get_readonly_fields(bursar_req, obj=self.school),
+        )
+
+        super_user = User.objects.create_superuser("owner", "owner@example.com", "StrongPassword123!")
+        super_req = rf.get("/admin/wallet/school/")
+        super_req.user = super_user
+        self.assertNotIn(
+            "subaccount_id",
+            school_admin.get_readonly_fields(super_req, obj=self.school),
+        )
+
+        # Student wallet_balance stays strictly read-only in StudentAdmin
+        self.assertIn("wallet_balance", student_admin.readonly_fields)
+
+        # WalletTopUpAdmin is read-only audit log
+        self.assertFalse(topup_admin.has_add_permission(super_req))
+        self.assertFalse(topup_admin.has_change_permission(super_req))
+        self.assertFalse(topup_admin.has_delete_permission(super_req))
+
+        # Attendant (is_staff=False) cannot add/view CanteenRefund even if given model permissions
+        add_refund_perm = Permission.objects.get(codename="add_canteenrefund")
+        view_refund_perm = Permission.objects.get(codename="view_canteenrefund")
+        self.attendant.user_permissions.add(add_refund_perm, view_refund_perm)
+        self.attendant.refresh_from_db()
+        attendant_req = rf.get("/admin/wallet/canteenrefund/")
+        attendant_req.user = self.attendant
+        self.assertFalse(refund_admin.has_module_permission(attendant_req))
+        self.assertFalse(refund_admin.has_view_permission(attendant_req))
+        self.assertFalse(refund_admin.has_add_permission(attendant_req))
+
+        # Bursar (is_staff=True) with permission can add/view CanteenRefund, never change/delete
+        self.bursar.user_permissions.add(add_refund_perm, view_refund_perm)
+        self.bursar = User.objects.get(pk=self.bursar.pk)
+        bursar_refund_req = rf.get("/admin/wallet/canteenrefund/")
+        bursar_refund_req.user = self.bursar
+        self.assertTrue(refund_admin.has_view_permission(bursar_refund_req))
+        self.assertTrue(refund_admin.has_add_permission(bursar_refund_req))
+        self.assertFalse(refund_admin.has_change_permission(bursar_refund_req))
+        self.assertFalse(refund_admin.has_delete_permission(bursar_refund_req))
+
+    def test_lookup_student_rate_limited(self):
+        cache.clear()
+        try:
+            for _ in range(20):
+                res = self.client.get(
+                    "/api/student/lookup/?reg_no=STD-2026-001",
+                    HTTP_X_FORWARDED_FOR="198.51.100.77, 10.0.0.1",
+                )
+                self.assertEqual(res.status_code, 200)
+                self.assertEqual(
+                    set(res.json().keys()),
+                    {"full_name", "class_stream", "school"},
+                )
+
+            blocked = self.client.get(
+                "/api/student/lookup/?reg_no=STD-2026-001",
+                HTTP_X_FORWARDED_FOR="198.51.100.77",
+            )
+            self.assertEqual(blocked.status_code, 429)
+            self.assertEqual(
+                blocked.json()["error"],
+                "Too many lookup attempts. Please wait a minute.",
+            )
+
+            # A different IP is still allowed
+            other_ip = self.client.get(
+                "/api/student/lookup/?reg_no=STD-2026-001",
+                HTTP_X_FORWARDED_FOR="203.0.113.5",
+            )
+            self.assertEqual(other_ip.status_code, 200)
+        finally:
+            cache.clear()
+
+    def test_pos_confirm_banner_and_bursar_cash_double_submit_guard(self):
+        self.client.login(username="canteen_staff", password="StrongPassword123!")
+        pos_res = self.client.get("/pos/")
+        self.assertEqual(pos_res.status_code, 200)
+        pos_html = pos_res.content.decode()
+        self.assertIn("confirmChargeBanner", pos_html)
+        self.assertIn("Confirm Charge: UGX ", pos_html)
+
+        self.client.login(username="school_bursar", password="StrongPassword123!")
+        cash_payload = {
+            "student_reg_no": "STD-2026-001",
+            "amount": "7000",
+            "receipt_note": "Cash #77",
+            "report_date": timezone.localdate().strftime("%Y-%m-%d"),
+        }
+        first = self.client.post("/report/daily/", cash_payload, follow=True)
+        second = self.client.post("/report/daily/", cash_payload, follow=True)
+        self.assertEqual(first.status_code, 200)
+        self.assertEqual(second.status_code, 200)
+        self.assertIn("Duplicate cash deposit detected", second.content.decode())
+        self.student.refresh_from_db()
+        self.assertEqual(self.student.wallet_balance, Decimal("17000.00"))
+
 
 class OnCommitSMSTests(TransactionTestCase):
     @patch("wallet.aggregator_service.send_topup_receipt_sms")
@@ -732,3 +846,106 @@ class OnCommitSMSTests(TransactionTestCase):
         mock_sms.assert_called_once()
         kwargs = mock_sms.call_args.kwargs
         self.assertEqual(kwargs["tx_ref"], str(topup.momo_reference_id)[:8].upper())
+
+    @patch("wallet.models.send_refund_receipt_sms")
+    @patch("wallet.models.send_cash_topup_receipt_sms")
+    @patch("wallet.views.send_canteen_purchase_sms")
+    def test_on_commit_sms_for_sale_cash_deposit_and_refund(
+        self, mock_sale_sms, mock_cash_sms, mock_refund_sms
+    ):
+        school = School.objects.create(
+            name="Yumbe School",
+            code_prefix="YMB",
+            subaccount_id="RS_123",
+            daily_spend_limit=Decimal("10000.00"),
+        )
+        attendant = User.objects.create_user(
+            username="pos_user", password="StrongPassword123!"
+        )
+        bursar = User.objects.create_user(
+            username="bursar_user", password="StrongPassword123!", is_staff=True
+        )
+        student = Student.objects.create(
+            school=school,
+            full_name="Amina Okello",
+            class_stream="S.2 A",
+            parent_phone="0772111222",
+            wallet_balance=Decimal("0.00"),
+        )
+        student.set_pin("1234")
+        student.save()
+
+        # 1. Bursar Cash Deposit SMS
+        self.client.login(username="bursar_user", password="StrongPassword123!")
+        cash_res = self.client.post(
+            "/report/daily/",
+            {
+                "student_reg_no": student.student_reg_no,
+                "amount": "8000",
+                "receipt_note": "Visiting Day #15",
+            },
+        )
+        self.assertEqual(cash_res.status_code, 302)
+        mock_cash_sms.assert_called_once()
+        cash_kwargs = mock_cash_sms.call_args.kwargs
+        self.assertEqual(cash_kwargs["student_name"], "Amina Okello")
+        self.assertEqual(Decimal(cash_kwargs["amount_deposited"]), Decimal("8000"))
+        self.assertEqual(cash_kwargs["receipt_note"], "Visiting Day #15")
+        self.assertEqual(Decimal(cash_kwargs["new_balance"]), Decimal("8000"))
+        self.assertEqual(cash_kwargs["recorded_by"], "bursar_user")
+
+        # 2. Canteen Purchase SMS
+        self.client.login(username="pos_user", password="StrongPassword123!")
+        sale_res = self.client.post(
+            "/api/canteen/checkout/",
+            data=json.dumps({
+                "student_reg_no": student.student_reg_no,
+                "amount": 2500,
+                "items_note": "Chapati + Soda",
+                "pin": "1234",
+            }),
+            content_type="application/json",
+        )
+        self.assertEqual(sale_res.status_code, 200)
+        mock_sale_sms.assert_called_once()
+        sale_kwargs = mock_sale_sms.call_args.kwargs
+        self.assertEqual(sale_kwargs["student_name"], "Amina Okello")
+        self.assertEqual(Decimal(sale_kwargs["amount_spent"]), Decimal("2500"))
+        self.assertEqual(sale_kwargs["items_note"], "Chapati + Soda")
+        self.assertEqual(Decimal(sale_kwargs["new_balance"]), Decimal("5500"))
+        order = CanteenOrder.objects.get(student=student)
+        self.assertEqual(sale_kwargs["order_ref"], str(order.id)[:8].upper())
+
+        # 3. Canteen Refund SMS
+        CanteenRefund.objects.create(
+            order=order,
+            amount=Decimal("2500.00"),
+            reason="Soda out of stock",
+            refunded_by=bursar,
+        )
+        mock_refund_sms.assert_called_once()
+        ref_kwargs = mock_refund_sms.call_args.kwargs
+        self.assertEqual(ref_kwargs["student_name"], "Amina Okello")
+        self.assertEqual(Decimal(ref_kwargs["amount_refunded"]), Decimal("2500"))
+        self.assertEqual(ref_kwargs["reason"], "Soda out of stock")
+        self.assertEqual(Decimal(ref_kwargs["new_balance"]), Decimal("8000"))
+        self.assertEqual(ref_kwargs["order_ref"], str(order.id)[:8].upper())
+
+        # 4. Placeholder/blank phone quietly skips all new SMS helpers
+        no_phone_student = Student.objects.create(
+            school=school,
+            full_name="Peter Drani",
+            parent_phone="N/A",
+            wallet_balance=Decimal("5000.00"),
+        )
+        no_phone_student.set_pin("1234")
+        no_phone_student.save()
+        self.assertIsNone(
+            sms_service.send_canteen_purchase_sms("N/A", "Peter Drani", "1000", "Tea", "4000", "ORD1")
+        )
+        self.assertIsNone(
+            sms_service.send_cash_topup_receipt_sms("", "Peter Drani", "5000", "Cash", "9000", "bursar")
+        )
+        self.assertIsNone(
+            sms_service.send_refund_receipt_sms("-", "Peter Drani", "1000", "5000", "Mistake", "ORD1")
+        )

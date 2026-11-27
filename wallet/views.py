@@ -395,7 +395,7 @@ def initiate_parent_topup(request):
 
         topup.status = "FAILED"
         topup.save(update_fields=["status"])
-        logger.warning("Flutterwave rejected top-up %s: %s", momo_ref_id, flw_res)
+        logger.error("Flutterwave rejected top-up %s (reg_no=%s): %s", momo_ref_id, reg_no, flw_res)
         gateway_msg = str(flw_res.get("message") or "").strip()
         if (
             gateway_msg

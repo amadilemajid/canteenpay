@@ -27,12 +27,24 @@ def initiate_ug_mobile_money_split(
     and automatically routes `student_amount` straight to the school's bank
     subaccount while keeping `platform_fee` in your account.
     """
+    secret_key = (getattr(settings, "FLW_SECRET_KEY", "") or "").strip()
+    upper_key = secret_key.upper()
+    if (
+        not secret_key
+        or "YOUR-SECRET-KEY" in upper_key
+        or "PLACEHOLDER" in upper_key
+    ):
+        return {
+            "status": "error",
+            "message": "Flutterwave API key is not configured on the server.",
+        }
+
     total_charge = student_amount + platform_fee
     network = "AIRTEL" if payer_phone.startswith(("25670", "25675", "25674")) else "MTN"
 
     url = f"{settings.FLW_BASE_URL}/charges?type=mobile_money_uganda"
     headers = {
-        "Authorization": f"Bearer {settings.FLW_SECRET_KEY}",
+        "Authorization": f"Bearer {secret_key}",
         "Content-Type": "application/json",
     }
 

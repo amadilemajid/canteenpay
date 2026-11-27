@@ -969,6 +969,53 @@ class CanteenPayProductionTests(TestCase):
         self.assertIn("remaining_daily_limit", body)
         self.assertEqual(Decimal(body["remaining_daily_limit"]), Decimal("0.00"))
 
+    @patch("wallet.aggregator_service.requests.post")
+    def test_split_init_rejects_missing_or_placeholder_flw_key(self, mock_post):
+        """Missing or placeholder FLW_SECRET_KEY returns a clear error without HTTP calls."""
+        from wallet.aggregator_service import initiate_ug_mobile_money_split
+
+        for bad_key in ("", "FLWSECK_TEST-YOUR-SECRET-KEY-HERE", "PLACEHOLDER_KEY"):
+            with override_settings(FLW_SECRET_KEY=bad_key):
+                res = initiate_ug_mobile_money_split(
+                    tx_ref="ref-123",
+                    payer_phone="256772000001",
+                    student_amount=5000,
+                    platform_fee=500,
+                    school_subaccount_id="RS_TEST",
+                    student_name="Namukasa Grace",
+                )
+            self.assertEqual(res["status"], "error")
+            self.assertEqual(
+                res["message"],
+                "Flutterwave API key is not configured on the server.",
+            )
+        mock_post.assert_not_called()
+
+    @override_settings(
+        LIVE_PAYMENTS_ENABLED=True,
+        FLW_SECRET_KEY="FLWSECK-LIVE-999999-X",
+    )
+    @patch("wallet.views.initiate_ug_mobile_money_split")
+    def test_initiate_topup_logs_error_and_surfaces_gateway_message(self, mock_split):
+        """Gateway failure logs via logger.error and returns 502 with gateway message."""
+        mock_split.return_value = {
+            "status": "error",
+            "message": "Invalid subaccount id",
+        }
+        with self.assertLogs("wallet.views", level="ERROR") as logs:
+            res = self.client.post(
+                "/api/parent/topup/",
+                data=json.dumps({
+                    "student_reg_no": self.student.student_reg_no,
+                    "amount": 5000,
+                    "payer_phone": "0772111222",
+                }),
+                content_type="application/json",
+            )
+        self.assertEqual(res.status_code, 502)
+        self.assertIn("Invalid subaccount id", res.json()["error"])
+        self.assertTrue(any("Invalid subaccount id" in msg for msg in logs.output))
+
 
 class OnCommitSMSTests(TransactionTestCase):
     @patch("wallet.aggregator_service.send_topup_receipt_sms")

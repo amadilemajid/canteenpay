@@ -185,6 +185,43 @@
             font-weight: 600; margin-bottom: 12px; text-align: center;
         }
         [data-theme="dark"] #offlineBanner { background: #451a03; color: #fde68a; }
+
+        /* ── Quick chips, recent student pill & digital receipt ── */
+        .chip-row { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 6px; }
+        .chip-btn {
+            width: auto; margin: 0; padding: 6px 11px;
+            font-size: 0.8rem; font-weight: 700; border-radius: 999px;
+            background: var(--input-bg); color: var(--text);
+            border: 1px solid var(--border); cursor: pointer;
+        }
+        .chip-btn:hover { background: #059669; color: #fff; border-color: #059669; }
+        .recent-pill {
+            display: none; align-items: center; justify-content: space-between; gap: 8px;
+            margin-top: 6px; padding: 6px 10px; border-radius: 8px;
+            background: var(--badge-bg); border: 1px solid var(--badge-brd);
+            color: var(--badge-txt); font-size: 0.82rem; font-weight: 600;
+        }
+        .recent-pill button {
+            width: auto; margin: 0; padding: 2px 8px; font-size: 0.78rem;
+            background: transparent; color: var(--badge-txt); border: none; cursor: pointer;
+        }
+        #receiptCard {
+            display: none; margin-top: 16px; padding: 16px; border-radius: 10px;
+            background: var(--card); border: 2px dashed #10b981;
+            font-size: 0.88rem; line-height: 1.55;
+        }
+        #receiptCard h3 { margin: 0 0 8px; font-size: 1rem; color: #059669; text-align: center; }
+        .rcpt-row { display: flex; justify-content: space-between; gap: 10px; padding: 3px 0; border-bottom: 1px dotted var(--border); }
+        .rcpt-row strong { text-align: right; }
+        .rcpt-actions { display: flex; gap: 8px; margin-top: 12px; }
+        .rcpt-actions button { margin-top: 0; padding: 10px; font-size: 0.86rem; background: #059669; color: #fff; }
+        .rcpt-actions button.copy-btn { background: #1e40af; color: #fff; }
+        @media print {
+            body * { visibility: hidden; }
+            #receiptCard, #receiptCard * { visibility: visible; }
+            #receiptCard { position: fixed; left: 0; top: 0; width: 100%; border: 2px solid #059669; background: #fff !important; color: #111827 !important; }
+            .rcpt-actions { display: none !important; }
+        }
     </style>
 </head>
 <body>
@@ -208,6 +245,10 @@
 
     <!-- CanteenPay code -->
     <label for="regNo">CanteenPay code</label>
+    <div id="recentStudentBar" class="recent-pill">
+        <span id="recentStudentApply" style="cursor:pointer; flex:1;" onclick="useSavedStudent()"></span>
+        <button type="button" onclick="clearSavedStudent()" title="Clear saved student">✕</button>
+    </div>
     <input type="text" id="regNo" placeholder="e.g. ARI-0001 (from your child's card or SMS)"
            onblur="verifyStudent()" autocomplete="off">
     <div class="field-error" id="regNoErr"></div>
@@ -218,6 +259,12 @@
     <label for="amount">Pocket Money Amount (UGX)</label>
     <input type="text" id="amount" inputmode="numeric" pattern="[0-9,]*"
            placeholder="e.g. 20,000" autocomplete="off" oninput="onAmountInput()">
+    <div class="chip-row" aria-label="Quick top-up amounts">
+        <button type="button" class="chip-btn" onclick="quickPickAmount(5000)">UGX 5,000</button>
+        <button type="button" class="chip-btn" onclick="quickPickAmount(10000)">UGX 10,000</button>
+        <button type="button" class="chip-btn" onclick="quickPickAmount(20000)">UGX 20,000</button>
+        <button type="button" class="chip-btn" onclick="quickPickAmount(50000)">UGX 50,000</button>
+    </div>
     <div class="field-error" id="amountErr"></div>
     <div class="input-hint">Minimum UGX 1,000 · Maximum UGX 10,000,000</div>
 
@@ -241,6 +288,16 @@
 
     <!-- Status / progress area -->
     <div id="statusBox" class="alert" role="status" aria-live="polite"></div>
+
+    <!-- Printable / Shareable Digital Receipt -->
+    <div id="receiptCard">
+        <h3>✅ CanteenPay Official Receipt</h3>
+        <div id="receiptRows"></div>
+        <div class="rcpt-actions">
+            <button type="button" onclick="window.print()">🖨️ Print / Save PDF</button>
+            <button type="button" class="copy-btn" onclick="copyReceiptText()">📋 Copy Receipt</button>
+        </div>
+    </div>
 </div>
 
 <footer style="max-width:420px; margin:24px auto 0; padding:16px; border-top:1px solid var(--footer-brd); font-size:0.82rem; color:var(--footer-txt);">
@@ -450,6 +507,50 @@ function updateCostBreakdown() {
 }
 
 /* ═══════════════════════════════════════════════════════════════════════
+   QUICK AMOUNTS & REMEMBER LAST STUDENT
+════════════════════════════════════════════════════════════════════════ */
+const LAST_STUDENT_KEY = "canteenpay_last_student";
+
+function quickPickAmount(val) {
+    const input = document.getElementById("amount");
+    input.value = Number(val).toLocaleString("en-UG");
+    validateAmountField();
+    updateCostBreakdown();
+    updateNetworkStyle();
+}
+
+function renderSavedStudent() {
+    const bar = document.getElementById("recentStudentBar");
+    const labelEl = document.getElementById("recentStudentApply");
+    let saved = null;
+    try { saved = JSON.parse(localStorage.getItem(LAST_STUDENT_KEY) || "null"); } catch (_) {}
+    if (saved && saved.regNo) {
+        labelEl.textContent = `Recent: ${saved.regNo} (${saved.label}) — tap to fill`;
+        bar.style.display = "flex";
+    } else {
+        bar.style.display = "none";
+    }
+}
+
+function saveLastStudent(regNo, label) {
+    try { localStorage.setItem(LAST_STUDENT_KEY, JSON.stringify({ regNo, label })); } catch (_) {}
+    renderSavedStudent();
+}
+
+function useSavedStudent() {
+    let saved = null;
+    try { saved = JSON.parse(localStorage.getItem(LAST_STUDENT_KEY) || "null"); } catch (_) {}
+    if (!saved || !saved.regNo) return;
+    document.getElementById("regNo").value = saved.regNo;
+    verifyStudent();
+}
+
+function clearSavedStudent() {
+    try { localStorage.removeItem(LAST_STUDENT_KEY); } catch (_) {}
+    renderSavedStudent();
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
    STUDENT VERIFY
 ════════════════════════════════════════════════════════════════════════ */
 async function verifyStudent() {
@@ -477,6 +578,7 @@ async function verifyStudent() {
             badge.style.border = "1px solid var(--badge-brd)";
             badge.innerText = `✓ ${data.full_name}${cls} — ${data.school}`;
             input.classList.add("field-ok");
+            saveLastStudent(regNo.toUpperCase(), data.full_name);
             showToast(`✓ Student found: ${data.full_name}`, "ok", 3000);
         } else {
             badge.style.background = "#fef2f2"; badge.style.color = "#991b1b";
@@ -632,6 +734,10 @@ async function verifyTopUp(refId, isSilent) {
             alertBox.className = "alert ok";
             const bal = Number(data.new_balance).toLocaleString("en-UG");
             alertBox.textContent = `🎉 ✓ ${data.message} (New Balance: UGX ${bal})`;
+            renderReceiptCard(data);
+            if (data.student_reg_no && data.student_name) {
+                saveLastStudent(data.student_reg_no, data.student_name);
+            }
             showToast(`✅ Wallet credited! New balance: UGX ${bal}`, "ok", 7000);
             setTimeout(() => {
                 document.getElementById("amount").value = "";
@@ -669,9 +775,68 @@ function openFlwAuth() {
 }
 
 /* ═══════════════════════════════════════════════════════════════════════
-   INIT — resume pending payment on page load
+   DIGITAL RECEIPT CARD
+════════════════════════════════════════════════════════════════════════ */
+let lastReceiptText = "";
+
+function renderReceiptCard(data) {
+    const card = document.getElementById("receiptCard");
+    const rowsEl = document.getElementById("receiptRows");
+    if (!data.short_ref) { card.style.display = "none"; return; }
+
+    const amt = Number(data.amount || 0).toLocaleString("en-UG");
+    const fee = Number(data.platform_fee || 500).toLocaleString("en-UG");
+    const tot = Number(data.total_paid || 0).toLocaleString("en-UG");
+    const bal = Number(data.new_balance || 0).toLocaleString("en-UG");
+    const cls = data.class_stream ? ` (${data.class_stream})` : "";
+
+    const rows = [
+        ["Receipt Ref", data.short_ref],
+        ["Student", `${data.student_name}${cls}`],
+        ["Wallet Code", data.student_reg_no || "-"],
+        ["School", data.school || "-"],
+        ["Pocket Money", `UGX ${amt}`],
+        ["Platform Fee", `UGX ${fee}`],
+        ["Total Paid", `UGX ${tot}`],
+        ["New Balance", `UGX ${bal}`],
+        ["Date / Time", data.paid_at || "-"],
+    ];
+
+    rowsEl.innerHTML = "";
+    rows.forEach(([label, val]) => {
+        const div = document.createElement("div");
+        div.className = "rcpt-row";
+        const span = document.createElement("span");
+        span.textContent = label;
+        const strong = document.createElement("strong");
+        strong.textContent = val;
+        div.appendChild(span);
+        div.appendChild(strong);
+        rowsEl.appendChild(div);
+    });
+    card.style.display = "block";
+
+    lastReceiptText = [
+        "CanteenPay Uganda Receipt",
+        ...rows.map(([k, v]) => `${k}: ${v}`),
+    ].join("\n");
+}
+
+async function copyReceiptText() {
+    if (!lastReceiptText) return;
+    try {
+        await navigator.clipboard.writeText(lastReceiptText);
+        showToast("Receipt copied ✓ — paste into WhatsApp or SMS", "ok", 3500);
+    } catch (_) {
+        showToast("Copy unavailable on this browser — use Print / Save PDF.", "warn", 3500);
+    }
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+   INIT — saved student & resume pending payment on page load
 ════════════════════════════════════════════════════════════════════════ */
 document.addEventListener("DOMContentLoaded", () => {
+    renderSavedStudent();
     const params  = new URLSearchParams(window.location.search);
     let savedRef  = null;
     try { savedRef = sessionStorage.getItem("canteenpay_pending_ref"); } catch (_) {}

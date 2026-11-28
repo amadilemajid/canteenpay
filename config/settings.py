@@ -129,6 +129,10 @@ STATIC_ROOT = os.environ.get(
     str(BASE_DIR / "staticfiles") if os.name == "nt" else "/home/amadilemajid10/canteenpay/static",
 )
 
+LOGIN_URL = "/staff/login/"
+LOGIN_REDIRECT_URL = "/pos/"
+LOGOUT_REDIRECT_URL = "/staff/login/"
+
 
 # Africa's Talking SMS Configuration
 AT_USERNAME = os.environ.get("AT_USERNAME", "sandbox")

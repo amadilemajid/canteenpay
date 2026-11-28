@@ -1,4 +1,5 @@
 from django.contrib import admin
+from django.contrib.auth.views import LoginView, LogoutView
 from django.urls import path
 from wallet.views import (
     parent_topup_page,
@@ -16,10 +17,27 @@ from wallet.views import (
     aggregator_callback_webhook,
     verify_parent_topup,
     check_student_balance,
+    healthz,
 )
 
 urlpatterns = [
     path("admin/", admin.site.urls),
+    # Staff Auth
+    path(
+        "staff/login/",
+        LoginView.as_view(
+            template_name="wallet/staff_login.html",
+            redirect_authenticated_user=True,
+        ),
+        name="staff_login",
+    ),
+    path(
+        "staff/logout/",
+        LogoutView.as_view(next_page="/staff/login/"),
+        name="staff_logout",
+    ),
+    # Health check
+    path("healthz/", healthz, name="healthz"),
     # Web Pages
     path("", parent_topup_page, name="parent_topup_page"),
     path("pos/", canteen_pos_page, name="canteen_pos_page"),

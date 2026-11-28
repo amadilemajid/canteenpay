@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-theme="light">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -8,27 +8,52 @@
     <meta http-equiv="Expires" content="0">
     <title>CanteenPay Uganda | Terms &amp; Policies</title>
     <style>
-        body { font-family: system-ui, -apple-system, sans-serif; background: #f4f6f8; margin: 0; padding: 0; color:#1f2937; line-height:1.6; }
+        :root {
+            --bg: #f4f6f8; --card: #ffffff; --text: #1f2937; --heading: #111827;
+            --muted: #4b5563; --border: #e5e7eb; --accent: #059669;
+        }
+        [data-theme="dark"] {
+            --bg: #111827; --card: #1f2937; --text: #e5e7eb; --heading: #f9fafb;
+            --muted: #9ca3af; --border: #374151; --accent: #10b981;
+        }
+        body {
+            font-family: system-ui, -apple-system, sans-serif;
+            background: var(--bg); color: var(--text);
+            margin: 0; padding: 0; line-height: 1.6;
+            transition: background 0.2s, color 0.2s;
+        }
         .container { max-width: 700px; margin: 0 auto; padding: 24px 16px; }
-        .card { background: #ffffff; border-radius: 12px; box-shadow: 0 4px 12px rgba(0,0,0,0.06); padding: 28px 24px; margin-bottom: 20px; }
-        h1 { color:#111827; font-size: 1.5rem; margin: 0 0 8px 0; }
-        h2 { color:#059669; font-size: 1.15rem; margin: 20px 0 10px 0; border-bottom: 1px solid #e5e7eb; padding-bottom: 6px; }
+        .top-row { display: flex; justify-content: space-between; align-items: center; margin-bottom: 14px; }
+        .card {
+            background: var(--card); border-radius: 12px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.08);
+            padding: 28px 24px; margin-bottom: 20px;
+            border: 1px solid var(--border);
+        }
+        h1 { color: var(--heading); font-size: 1.5rem; margin: 0 0 8px 0; }
+        h2 { color: var(--accent); font-size: 1.15rem; margin: 22px 0 10px 0; border-bottom: 1px solid var(--border); padding-bottom: 6px; }
         p { margin: 0 0 12px 0; font-size: 0.95rem; }
         ul { margin: 6px 0 14px 0; padding-left: 20px; }
         li { margin-bottom: 6px; font-size: 0.95rem; }
-        .footer-note { margin-top: 24px; padding-top: 16px; border-top: 1px solid #e5e7eb; font-size: 0.85rem; color:#6b7280; }
-        .footer-note a { color:#059669; text-decoration: none; }
-        .footer-note a:hover { text-decoration: underline; }
-        .back-link { display: inline-block; margin-bottom: 16px; color:#059669; text-decoration: none; font-weight: 600; }
+        .back-link { color: var(--accent); text-decoration: none; font-weight: 700; }
         .back-link:hover { text-decoration: underline; }
+        .theme-btn {
+            background: var(--card); color: var(--text); border: 1px solid var(--border);
+            border-radius: 8px; padding: 6px 12px; font-size: 0.88rem; cursor: pointer; font-weight: 600;
+        }
+        .footer-note { margin-top: 24px; padding-top: 16px; border-top: 1px solid var(--border); font-size: 0.85rem; color: var(--muted); }
     </style>
 </head>
 <body>
 <div class="container">
-    <div class="card">
+    <div class="top-row">
         <a href="/" class="back-link">&larr; Back to CanteenPay</a>
+        <button type="button" class="theme-btn" id="themeToggle" onclick="toggleTheme()">🌙 Dark mode</button>
+    </div>
+
+    <div class="card">
         <h1>CanteenPay Uganda &mdash; Terms &amp; Policies</h1>
-        <p style="color:#4b5563; font-size:0.9rem;">Effective for all schools, parents, and canteen operators using CanteenPay Uganda.</p>
+        <p style="color:var(--muted); font-size:0.9rem;">Effective for all schools, parents, and canteen operators using CanteenPay Uganda.</p>
 
         <h2>1. About &amp; Contact</h2>
         <p>CanteenPay Uganda is a cashless school canteen wallet and pocket-money management platform based in Kampala and Yumbe District, Uganda. Parents top up their child&rsquo;s wallet via Mobile Money (MTN MoMo or Airtel Money), and funds settle directly into participating school bank accounts.</p>
@@ -39,25 +64,25 @@
             <li><strong>Platform fee:</strong> A flat UGX 500 convenience fee is added to every top-up transaction and retained by CanteenPay Uganda for platform operation and support.</li>
             <li><strong>Direct settlement:</strong> When a school has a Flutterwave subaccount configured, the student&rsquo;s portion settles directly to the school&rsquo;s bank account while the platform fee is retained separately.</li>
             <li><strong>Minimum top-up:</strong> UGX 1,000 per transaction.</li>
-            <li><strong>Daily spending limit:</strong> Each school sets a daily spend limit per student. Canteen purchases cannot exceed the remaining daily limit.</li>
+            <li><strong>Daily spending limit:</strong> Each school sets a daily spend limit per student (or a custom per-student cap). Canteen purchases cannot exceed the remaining daily limit.</li>
             <li>By using CanteenPay, you authorize Mobile Money charges and confirm you are the parent or legal guardian of the registered student.</li>
         </ul>
 
-        <h2>2. Refund &amp; Dispute Policy</h2>
+        <h2>3. Refund &amp; Dispute Policy</h2>
         <p>If a Mobile Money top-up is not credited to a student&rsquo;s wallet, or if a duplicate charge occurs:</p>
         <ul>
-            <li><strong>Transaction reference:</strong> Every top-up generates a unique reference ID. Keep this reference (shown on your receipt or SMS) for any dispute.</li>
+            <li><strong>Transaction reference:</strong> Every top-up generates a unique reference ID. Keep this reference (shown on your digital receipt or SMS) for any dispute.</li>
             <li><strong>Verification:</strong> The school bursar or CanteenPay support verifies the transaction status directly with Flutterwave using the reference ID.</li>
             <li><strong>Resolution time:</strong> Verified uncredited or duplicate top-ups are resolved within 24 hours&mdash;either credited to the student&rsquo;s wallet or refunded to the parent&rsquo;s Mobile Money account.</li>
             <li><strong>Contact:</strong> Email amadilemajid10@gmail.com with the transaction reference, student registration ID, and amount.</li>
         </ul>
 
-        <h2>3. Privacy Policy</h2>
+        <h2>4. Privacy Policy</h2>
         <p>CanteenPay Uganda protects personal data in compliance with Uganda&rsquo;s Data Protection and Privacy Act.</p>
         <ul>
             <li><strong>Student registration IDs:</strong> Used only to link top-ups and canteen purchases to the correct student wallet. Never shared with third parties.</li>
             <li><strong>Parent phone numbers:</strong> Collected solely to send Mobile Money top-up prompts and SMS receipts. Not used for marketing without consent.</li>
-            <li><strong>4-digit canteen PINs:</strong> Encrypted and stored securely. PINs are required at the canteen point of sale to authorize purchases and are never transmitted in plain text.</li>
+            <li><strong>4-digit canteen PINs:</strong> Hashed and stored securely. PINs are required at the canteen point of sale to authorize purchases and are never stored or transmitted in plain text.</li>
             <li><strong>Access control:</strong> Only the school bursar and authorized staff can view transaction and settlement reports.</li>
         </ul>
     </div>
@@ -68,5 +93,22 @@
         <p>&copy; 2026 CanteenPay Uganda. All rights reserved.</p>
     </div>
 </div>
+<script>
+    const THEME_KEY = "canteenpay_theme";
+    function applyTheme(dark) {
+        document.documentElement.setAttribute("data-theme", dark ? "dark" : "light");
+        document.getElementById("themeToggle").textContent = dark ? "☀️ Light mode" : "🌙 Dark mode";
+        try { localStorage.setItem(THEME_KEY, dark ? "dark" : "light"); } catch (_) {}
+    }
+    function toggleTheme() {
+        applyTheme(document.documentElement.getAttribute("data-theme") !== "dark");
+    }
+    (function () {
+        let saved = null;
+        try { saved = localStorage.getItem(THEME_KEY); } catch (_) {}
+        const prefersDark = saved ? saved === "dark" : window.matchMedia("(prefers-color-scheme: dark)").matches;
+        applyTheme(prefersDark);
+    })();
+</script>
 </body>
 </html>

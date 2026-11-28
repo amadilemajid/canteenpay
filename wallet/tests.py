@@ -1140,8 +1140,120 @@ class CanteenPayProductionTests(TestCase):
 
         self.client.login(username="canteen_staff", password="StrongPassword123!")
         pos_html = self.client.get("/pos/").content.decode()
-        for snippet in ("toastContainer", "themeToggle", "itemsCounter", "startAutoResetCountdown", "offlineBanner", "sessionBanner"):
+        for snippet in (
+            "toastContainer",
+            "themeToggle",
+            "itemsCounter",
+            "startAutoResetCountdown",
+            "offlineBanner",
+            "sessionBanner",
+            "quickSetAmount",
+            "quickAddItem",
+            "recentSalesList",
+            "torchBtn",
+        ):
             self.assertIn(snippet, pos_html)
+
+    @patch("wallet.aggregator_service.verify_flw_transaction_by_ref")
+    def test_tier1_login_healthz_receipt_pos_shift_and_bursar_csv_export(self, mock_verify):
+        """Verifies branded staff login, /healthz/, digital receipt payload, POS shift tracking, and CSV export."""
+        # 1. Health check endpoint
+        hz = self.client.get("/healthz/")
+        self.assertEqual(hz.status_code, 200)
+        self.assertEqual(hz.json(), {"status": "ok", "database": "ok"})
+
+        # 2. Branded staff login & redirect to /pos/
+        unauth_pos = self.client.get("/pos/")
+        self.assertEqual(unauth_pos.status_code, 302)
+        self.assertIn("/staff/login/", unauth_pos.url)
+        login_page = self.client.get("/staff/login/")
+        self.assertEqual(login_page.status_code, 200)
+        self.assertIn("Staff &amp; Bursar Sign In", login_page.content.decode())
+
+        login_res = self.client.post(
+            "/staff/login/",
+            {"username": "canteen_staff", "password": "StrongPassword123!"},
+        )
+        self.assertRedirects(login_res, "/pos/", fetch_redirect_response=False)
+
+        # 3. POS checkout returns order_ref/amount and /pos/ displays shift summary & recent sale
+        chk = self.client.post(
+            "/api/canteen/checkout/",
+            data=json.dumps({
+                "student_reg_no": self.student.student_reg_no,
+                "amount": 2000,
+                "items_note": "Rolex",
+                "pin": "1234",
+            }),
+            content_type="application/json",
+        )
+        self.assertEqual(chk.status_code, 200)
+        chk_data = chk.json()
+        self.assertIn("order_ref", chk_data)
+        self.assertEqual(Decimal(chk_data["amount"]), Decimal("2000"))
+
+        pos_html = self.client.get("/pos/").content.decode()
+        self.assertIn('<span id="shiftTotal">2000</span>', pos_html)
+        self.assertIn('<span id="shiftCount">1</span>', pos_html)
+        self.assertIn("Rolex", pos_html)
+
+        # 4. Parent top-up verification returns full digital receipt fields & parent UI renders receipt/chips
+        parent_html = self.client.get("/").content.decode()
+        for snippet in ("receiptCard", "quickPickAmount", "recentStudentBar", "copyReceiptText"):
+            self.assertIn(snippet, parent_html)
+
+        topup = WalletTopUp.objects.create(
+            student=self.student,
+            payer_phone="256772111222",
+            amount=Decimal("10000.00"),
+            platform_fee=Decimal("500.00"),
+            status="PENDING",
+        )
+        mock_verify.return_value = {
+            "status": "success",
+            "data": {"status": "successful", "currency": "UGX", "amount": 10500},
+        }
+        v_res = self.client.post(
+            "/api/parent/topup/verify/",
+            data=json.dumps({"reference_id": str(topup.momo_reference_id)}),
+            content_type="application/json",
+        )
+        self.assertEqual(v_res.status_code, 200)
+        v_data = v_res.json()
+        self.assertEqual(v_data["short_ref"], str(topup.momo_reference_id)[:8].upper())
+        self.assertEqual(v_data["student_reg_no"], self.student.student_reg_no)
+        self.assertEqual(Decimal(v_data["total_paid"]), Decimal("10500.00"))
+
+        # 5. Bursar report attendant breakdown, comma-formatted cash submit, and CSV export
+        self.client.login(username="school_bursar", password="StrongPassword123!")
+        cash_post = self.client.post(
+            "/report/daily/",
+            {
+                "student_reg_no": self.student.student_reg_no,
+                "amount": "20,000",
+                "receipt_note": "Term Cash #5",
+                "report_date": timezone.localdate().strftime("%Y-%m-%d"),
+            },
+        )
+        self.assertEqual(cash_post.status_code, 302)
+
+        report_html = self.client.get("/report/daily/").content.decode()
+        self.assertIn("Per-Attendant Canteen Sales Breakdown", report_html)
+        self.assertIn("canteen_staff", report_html)
+        self.assertIn("export=csv", report_html)
+
+        csv_res = self.client.get("/report/daily/?export=csv")
+        self.assertEqual(csv_res.status_code, 200)
+        self.assertIn("text/csv", csv_res["Content-Type"])
+        csv_text = csv_res.content.decode()
+        self.assertIn("Per-Attendant Canteen Sales Breakdown", csv_text)
+        self.assertIn("canteen_staff,1,2000", csv_text)
+        self.assertIn("Term Cash #5", csv_text)
+
+        # 6. Policies page includes fixed numbering & theme toggle
+        pol_html = self.client.get("/policies/").content.decode()
+        self.assertIn("4. Privacy Policy", pol_html)
+        self.assertIn("themeToggle", pol_html)
 
 
 class OnCommitSMSTests(TransactionTestCase):

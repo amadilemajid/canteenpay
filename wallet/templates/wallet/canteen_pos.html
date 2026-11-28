@@ -262,6 +262,40 @@
         .toast-err  { background: #fef2f2; color: #991b1b; border-left: 4px solid #ef4444; }
         .toast-info { background: #eff6ff; color: #1e40af; border-left: 4px solid #3b82f6; }
         .toast-warn { background: #fef3c7; color: #92400e; border-left: 4px solid #f59e0b; }
+
+        /* ── Shift badge, camera actions, quick chips & recent sales feed ── */
+        .shift-pill {
+            font-size: 0.78rem; font-weight: 700; color: #d1fae5;
+            background: #064e3b; border: 1px solid #10b981;
+            border-radius: 999px; padding: 4px 10px; white-space: nowrap;
+        }
+        .cam-actions { display: flex; gap: 8px; margin-top: 6px; }
+        .cam-actions button {
+            flex: 1; display: none; margin-top: 0; padding: 8px 10px;
+            background: var(--btn-sec-bg); color: var(--btn-sec-txt);
+            border: 1px solid var(--btn-sec-brd);
+            border-radius: 6px; font-size: 0.82rem; font-weight: 600;
+        }
+        .cam-actions button:hover:not(:disabled) { background: var(--btn-sec-hover); }
+        #torchBtn.active { background: #f59e0b; color: #111827; border-color: #d97706; }
+        .chip-row { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 6px; }
+        .chip-btn {
+            width: auto; margin: 0; padding: 5px 10px;
+            font-size: 0.78rem; font-weight: 700; border-radius: 999px;
+            background: var(--btn-sec-bg); color: var(--btn-sec-txt);
+            border: 1px solid var(--btn-sec-brd); cursor: pointer;
+        }
+        .chip-btn:hover { background: #10b981; color: #fff; border-color: #10b981; }
+        .recent-card h3 { margin: 0 0 10px; font-size: 0.98rem; color: #10b981; display: flex; justify-content: space-between; align-items: center; }
+        .recent-list { display: flex; flex-direction: column; gap: 8px; }
+        .recent-row {
+            display: flex; justify-content: space-between; align-items: center; gap: 10px;
+            padding: 9px 11px; border-radius: 8px;
+            background: var(--input-bg); border: 1px solid var(--btn-sec-brd);
+            font-size: 0.84rem;
+        }
+        .recent-row .meta { color: var(--muted); font-size: 0.76rem; margin-top: 2px; }
+        .recent-row .amt  { font-weight: 800; color: #10b981; white-space: nowrap; font-family: monospace; font-size: 0.92rem; }
     </style>
 </head>
 <body>
@@ -271,7 +305,10 @@
 
 <!-- ── Staff header bar ─────────────────────────────────────────────────── -->
 <div class="staff-bar">
-    <div class="attendant">🧑‍💼 Attendant: <span>{{ request.user.username }}</span></div>
+    <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
+        <div class="attendant">🧑‍💼 Attendant: <span>{{ request.user.username }}</span></div>
+        <div class="shift-pill" id="shiftSummary">🧾 Shift: UGX <span id="shiftTotal">{{ shift_total|default:0 }}</span> (<span id="shiftCount">{{ shift_count|default:0 }}</span>)</div>
+    </div>
     <nav>
         <a href="{% url 'bursar_daily_report' %}">📊 Daily Report</a>
         <a href="{% url 'daily_topup_noticeboard' %}">📋 Top-Up Board</a>
@@ -280,7 +317,7 @@
     </nav>
     <div class="bar-actions">
         <button id="themeToggle" type="button" onclick="toggleTheme()" title="Toggle dark / light mode">☀️ Light</button>
-        <form class="logout-form" method="post" action="{% url 'admin:logout' %}">
+        <form class="logout-form" method="post" action="{% url 'staff_logout' %}">
             {% csrf_token %}
             <button type="submit">⏏ Log Out</button>
         </form>
@@ -299,7 +336,10 @@
     <!-- Camera preview — Html5Qrcode renders into this div -->
     <div id="reader"></div>
     <div id="cameraStatus">🎥 Starting rear camera…</div>
-    <button id="switchCameraBtn" type="button" onclick="switchCamera()">🔄 Switch Camera</button>
+    <div class="cam-actions">
+        <button id="switchCameraBtn" type="button" onclick="switchCamera()">🔄 Switch Camera</button>
+        <button id="torchBtn" type="button" onclick="toggleTorch()">🔦 Torch</button>
+    </div>
 
     <label for="nameSearch">Search by student name</label>
     <input type="text" id="nameSearch" placeholder="Type a name, then tap Full Name — Class" autocomplete="off">
@@ -314,12 +354,27 @@
     <!-- inputmode="numeric" opens the numeric keypad directly on Android; text allows live comma formatting -->
     <input type="text" id="orderAmount" placeholder="e.g. 2,500"
            inputmode="numeric" pattern="[0-9,]*" autocomplete="off">
+    <div class="chip-row" aria-label="Quick amounts">
+        <button type="button" class="chip-btn" onclick="quickSetAmount(500)">500</button>
+        <button type="button" class="chip-btn" onclick="quickSetAmount(1000)">1,000</button>
+        <button type="button" class="chip-btn" onclick="quickSetAmount(2000)">2,000</button>
+        <button type="button" class="chip-btn" onclick="quickSetAmount(3000)">3,000</button>
+        <button type="button" class="chip-btn" onclick="quickSetAmount(5000)">5,000</button>
+    </div>
 
     <div class="label-row">
         <label for="itemsNote">Items Bought (Optional)</label>
         <span id="itemsCounter" class="char-counter">0 / 255</span>
     </div>
     <input type="text" id="itemsNote" maxlength="255" placeholder="e.g. Chapati + Soda" autocomplete="off">
+    <div class="chip-row" aria-label="Quick items">
+        <button type="button" class="chip-btn" onclick="quickAddItem('Chapati')">+ Chapati</button>
+        <button type="button" class="chip-btn" onclick="quickAddItem('Soda')">+ Soda</button>
+        <button type="button" class="chip-btn" onclick="quickAddItem('Mandazi')">+ Mandazi</button>
+        <button type="button" class="chip-btn" onclick="quickAddItem('Rolex')">+ Rolex</button>
+        <button type="button" class="chip-btn" onclick="quickAddItem('Tea')">+ Tea</button>
+        <button type="button" class="chip-btn" onclick="quickAddItem('Water')">+ Water</button>
+    </div>
 
     <!-- Confirmation banner — shown as soon as student + amount are known -->
     <div id="confirmChargeBanner" class="confirm-banner" role="status" aria-live="polite"></div>
@@ -335,6 +390,17 @@
 
     <div id="alertBox" class="alert" role="status" aria-live="polite"></div>
 </div>
+
+<!-- ── Recent sales mini-feed ────────────────────────────────────────────── -->
+<div class="container recent-card" id="recentSalesCard">
+    <h3>
+        <span>🕒 Recent Shift Sales</span>
+        <span style="font-size:0.75rem; color:var(--muted); font-weight:600;">Last 5</span>
+    </h3>
+    <div id="recentSalesList" class="recent-list"></div>
+</div>
+
+{{ recent_orders_json|default:"[]"|json_script:"recentOrdersInit" }}
 
 <script>
     /* ═══════════════════════════════════════════════════════════════════════
@@ -534,11 +600,38 @@
         }
     }
 
+    const torchBtn = document.getElementById("torchBtn");
+    let torchOn = false;
+
+    function refreshTorchButton() {
+        torchOn = false;
+        torchBtn.classList.remove("active");
+        const track = getActiveVideoTrack();
+        const caps = track && typeof track.getCapabilities === "function" ? track.getCapabilities() : {};
+        torchBtn.style.display = caps && caps.torch ? "block" : "none";
+    }
+
+    async function toggleTorch() {
+        const track = getActiveVideoTrack();
+        if (!track || typeof track.applyConstraints !== "function") return;
+        try {
+            torchOn = !torchOn;
+            await track.applyConstraints({ advanced: [{ torch: torchOn }] });
+            torchBtn.classList.toggle("active", torchOn);
+            torchBtn.textContent = torchOn ? "🔦 Torch ON" : "🔦 Torch";
+        } catch (_) {
+            torchOn = false;
+            torchBtn.classList.remove("active");
+            showToast("Flashlight control unsupported on this camera.", "warn", 2500);
+        }
+    }
+
     async function onCameraStarted(explicitCameraId = null) {
         if (explicitCameraId) {
             currentCameraId = explicitCameraId;
         }
         await refreshCameraList();
+        refreshTorchButton();
         cameraStatus.className = "ready";
         cameraStatus.textContent = readyStatusText();
         // Warm up AudioContext so the first scan beep fires without delay
@@ -722,11 +815,37 @@
         resetCheckoutKey();
         updateConfirmChargeBanner();
     });
+    orderAmount.addEventListener("keydown", (e) => {
+        if (e.key === "Enter") { e.preventDefault(); document.getElementById("studentPin").focus(); }
+    });
+    document.getElementById("studentPin").addEventListener("keydown", (e) => {
+        if (e.key === "Enter") { e.preventDefault(); processCheckout(); }
+    });
     itemsNote.addEventListener("input", () => {
         const len = itemsNote.value.length;
         itemsCounter.textContent = `${len} / 255`;
         itemsCounter.classList.toggle("warn", len >= 220);
     });
+
+    function quickSetAmount(val) {
+        cancelAutoReset();
+        orderAmount.value = Number(val).toLocaleString("en-UG");
+        resetCheckoutKey();
+        updateConfirmChargeBanner();
+        document.getElementById("studentPin").focus();
+    }
+
+    function quickAddItem(label) {
+        cancelAutoReset();
+        const cur = itemsNote.value.trim();
+        const next = cur ? `${cur} + ${label}` : label;
+        if (next.length <= 255) {
+            itemsNote.value = next;
+            const len = itemsNote.value.length;
+            itemsCounter.textContent = `${len} / 255`;
+            itemsCounter.classList.toggle("warn", len >= 220);
+        }
+    }
 
     /* ═══════════════════════════════════════════════════════════════════════
        Name search
@@ -987,6 +1106,16 @@
                 const okMsg = `✅ APPROVED!  New Balance: UGX ${newBal}`;
                 showAlert("ok", okMsg);
                 showToast(okMsg, "ok", 4000);
+                if (!data.duplicate) {
+                    recordRecentSale({
+                        order_ref: data.order_ref || "",
+                        student_name: data.student_name || selectedStudent.name || regNo,
+                        student_reg_no: data.student_reg_no || regNo,
+                        amount: Number(data.amount || amtNum),
+                        items_note: data.items_note || itemsNote.value.trim(),
+                        time: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: false }),
+                    });
+                }
                 orderAmount.value = "";
                 itemsNote.value = "";
                 itemsCounter.textContent = "0 / 255";
@@ -1017,13 +1146,68 @@
     }
 
     /* ═══════════════════════════════════════════════════════════════════════
-       Alert helper
+       Alert helper & Shift Recent Sales feed
     ════════════════════════════════════════════════════════════════════════ */
     function showAlert(type, msg) {
         alertBox.style.display = "block";
         alertBox.className = `alert ${type}`;
         alertBox.innerText = msg;
     }
+
+    let shiftTotalNum = Number(document.getElementById("shiftTotal").textContent.replace(/\D/g, "")) || 0;
+    let shiftCountNum = Number(document.getElementById("shiftCount").textContent.replace(/\D/g, "")) || 0;
+    let recentOrders = [];
+    try {
+        recentOrders = JSON.parse(document.getElementById("recentOrdersInit").textContent || "[]");
+    } catch (_) { recentOrders = []; }
+
+    function renderShiftPill() {
+        document.getElementById("shiftTotal").textContent = shiftTotalNum.toLocaleString("en-UG");
+        document.getElementById("shiftCount").textContent = String(shiftCountNum);
+    }
+
+    function renderRecentSales() {
+        const list = document.getElementById("recentSalesList");
+        list.innerHTML = "";
+        if (!recentOrders.length) {
+            const empty = document.createElement("div");
+            empty.style.cssText = "color:var(--muted); font-size:0.84rem; text-align:center; padding:8px 0;";
+            empty.textContent = "No sales recorded on this shift yet.";
+            list.appendChild(empty);
+            return;
+        }
+        recentOrders.slice(0, 5).forEach((item) => {
+            const row = document.createElement("div");
+            row.className = "recent-row";
+            const left = document.createElement("div");
+            const title = document.createElement("strong");
+            title.textContent = `${item.student_name} (${item.student_reg_no})`;
+            const meta = document.createElement("div");
+            meta.className = "meta";
+            const notePart = item.items_note ? ` · ${item.items_note}` : "";
+            meta.textContent = `${item.time} · Ref ${item.order_ref}${notePart}`;
+            left.appendChild(title);
+            left.appendChild(meta);
+            const right = document.createElement("div");
+            right.className = "amt";
+            right.textContent = `UGX ${Number(item.amount).toLocaleString("en-UG")}`;
+            row.appendChild(left);
+            row.appendChild(right);
+            list.appendChild(row);
+        });
+    }
+
+    function recordRecentSale(sale) {
+        shiftTotalNum += Number(sale.amount || 0);
+        shiftCountNum += 1;
+        renderShiftPill();
+        recentOrders.unshift(sale);
+        recentOrders = recentOrders.slice(0, 5);
+        renderRecentSales();
+    }
+
+    renderShiftPill();
+    renderRecentSales();
 
     /* ═══════════════════════════════════════════════════════════════════════
        PWA Registration & Install Prompt

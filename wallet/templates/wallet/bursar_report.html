@@ -52,6 +52,7 @@
                 <input type="date" name="date" value="{{ report_date|date:'Y-m-d' }}" style="padding:7px; width:auto;">
                 <button type="submit" class="btn">Filter</button>
             </form>
+            <a href="?date={{ report_date|date:'Y-m-d' }}&amp;export=csv" class="btn" style="background:#2563eb; text-decoration:none;">⬇ Export CSV</a>
             <button onclick="window.print()" class="btn" style="background:#059669;">Print Report</button>
             <button type="button" id="themeToggle" onclick="toggleTheme()" class="btn" title="Toggle dark / light mode">🌙 Dark</button>
         </div>
@@ -104,7 +105,7 @@
 
     <div class="cash-box no-print">
         <h3>Bursar Cash-In Desk (Physical Cash Top-Up)</h3>
-        <form method="post" class="cash-form" onsubmit="const btn=this.querySelector('button[type=submit]'); if(btn.disabled) return false; btn.disabled=true; btn.innerText='Recording...';">
+        <form method="post" class="cash-form" onsubmit="const amt=document.getElementById('cashAmount'); amt.value=amt.value.replace(/\D/g,''); const btn=this.querySelector('button[type=submit]'); if(btn.disabled) return false; btn.disabled=true; btn.innerText='Recording...';">
             {% csrf_token %}
             <input type="hidden" name="report_date" value="{{ report_date|date:'Y-m-d' }}">
             <div>
@@ -113,7 +114,7 @@
             </div>
             <div>
                 <label for="cashAmount">Cash Amount (UGX)</label>
-                <input type="number" id="cashAmount" name="amount" min="500" step="500" placeholder="e.g. 20000" required>
+                <input type="text" id="cashAmount" name="amount" inputmode="numeric" pattern="[0-9,]*" placeholder="e.g. 20,000" oninput="formatCashAmount()" required>
             </div>
             <div>
                 <label for="cashNote">Receipt / Book Note</label>
@@ -126,8 +127,30 @@
         <div id="cashStudentBadge" class="lookup-badge"></div>
     </div>
 
+    {% if attendant_breakdown %}
+    <h3 style="margin-top:26px; font-size:1rem;">Per-Attendant Canteen Sales Breakdown ({{ report_date }})</h3>
+    <table>
+        <thead>
+            <tr>
+                <th>Attendant</th>
+                <th>Transactions</th>
+                <th>Gross Canteen Sales</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for att in attendant_breakdown %}
+            <tr>
+                <td><strong>{{ att.username }}</strong></td>
+                <td>{{ att.order_count }} sale{{ att.order_count|pluralize }}</td>
+                <td class="money" style="color:#059669;">UGX {{ att.total_sales|floatformat:0 }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    {% endif %}
+
     {% if recent_cash_topups %}
-    <h3 style="margin-top:26px; font-size:1rem;">Bursar Cash-In Log ({{ report_date }})</h3>
+    <h3 style="margin-top:26px; font-size:1rem;">Bursar Cash-In Log ({{ report_date }}) &mdash; <span class="money" style="color:#0369a1;">Total: UGX {{ total_cash_collected|floatformat:0 }}</span></h3>
     <table>
         <thead>
             <tr>
@@ -186,6 +209,13 @@ document.addEventListener("DOMContentLoaded", () => {
         });
     });
 });
+
+function formatCashAmount() {
+    const input = document.getElementById("cashAmount");
+    const digits = input.value.replace(/\D/g, "");
+    const num = digits ? parseInt(digits, 10) : NaN;
+    input.value = (!isNaN(num) && num > 0) ? num.toLocaleString("en-UG") : "";
+}
 
 async function lookupCashStudent() {
     const regNo = document.getElementById("cashRegNo").value.trim();

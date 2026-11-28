@@ -1,4 +1,5 @@
 import base64
+import csv
 import hmac
 import io
 import json
@@ -15,7 +16,7 @@ from django.contrib.admin.views.decorators import staff_member_required
 from django.contrib.auth.decorators import login_required
 from django.core.cache import cache
 from django.core.exceptions import ValidationError
-from django.db import IntegrityError, transaction
+from django.db import IntegrityError, connection, transaction
 from django.db.models import Count, Q, Sum
 from django.http import HttpResponse, JsonResponse
 from django.shortcuts import redirect, render
@@ -175,7 +176,7 @@ def _verify_pin_or_lockout(student: Student, raw_pin: str):
     return None
 
 
-@login_required(login_url="/admin/login/")
+@login_required(login_url="/staff/login/")
 @require_POST
 def canteen_checkout(request):
     """
@@ -230,7 +231,11 @@ def canteen_checkout(request):
                             {
                                 "status": "APPROVED",
                                 "order_id": str(existing_order.id),
+                                "order_ref": str(existing_order.id)[:8].upper(),
                                 "student_name": student.full_name,
+                                "student_reg_no": student.student_reg_no,
+                                "amount": str(existing_order.amount),
+                                "items_note": existing_order.items_note,
                                 "new_balance": str(student.wallet_balance),
                                 "duplicate": True,
                             },
@@ -308,7 +313,11 @@ def canteen_checkout(request):
             {
                 "status": "APPROVED",
                 "order_id": str(order.id),
+                "order_ref": str(order.id)[:8].upper(),
                 "student_name": student.full_name,
+                "student_reg_no": student.student_reg_no,
+                "amount": str(order.amount),
+                "items_note": order.items_note,
                 "new_balance": str(student.wallet_balance),
             },
             status=200,
@@ -462,6 +471,25 @@ def initiate_parent_topup(request):
         )
 
 
+def _topup_receipt_payload(topup: WalletTopUp, student: Student, message: str) -> dict:
+    """Shared digital receipt payload returned for credited parent top-ups."""
+    return {
+        "status": "SUCCESSFUL",
+        "message": message,
+        "new_balance": str(student.wallet_balance),
+        "reference_id": str(topup.momo_reference_id),
+        "short_ref": str(topup.momo_reference_id)[:8].upper(),
+        "student_name": student.full_name,
+        "class_stream": student.class_stream,
+        "student_reg_no": student.student_reg_no,
+        "school": student.school.name,
+        "amount": str(topup.amount),
+        "platform_fee": str(topup.platform_fee),
+        "total_paid": str(topup.amount + topup.platform_fee),
+        "paid_at": timezone.localtime(topup.created_at).strftime("%d %b %Y, %H:%M"),
+    }
+
+
 @require_POST
 def verify_parent_topup(request):
     """
@@ -480,30 +508,12 @@ def verify_parent_topup(request):
         outcome, topup, student = verify_and_credit_flw_topup(reference_id)
 
         if outcome == "ALREADY_PROCESSED":
-            return JsonResponse(
-                {
-                    "status": "SUCCESSFUL",
-                    "message": (
-                        f"Confirmed! UGX {int(topup.amount):,} credited to "
-                        f"{student.full_name}."
-                    ),
-                    "new_balance": str(student.wallet_balance),
-                },
-                status=200,
-            )
+            msg = f"Confirmed! UGX {int(topup.amount):,} credited to {student.full_name}."
+            return JsonResponse(_topup_receipt_payload(topup, student, msg), status=200)
 
         if outcome == "CREDITED":
-            return JsonResponse(
-                {
-                    "status": "SUCCESSFUL",
-                    "message": (
-                        f"Payment Verified! UGX {int(topup.amount):,} added to "
-                        f"{student.full_name}'s wallet."
-                    ),
-                    "new_balance": str(student.wallet_balance),
-                },
-                status=200,
-            )
+            msg = f"Payment Verified! UGX {int(topup.amount):,} added to {student.full_name}'s wallet."
+            return JsonResponse(_topup_receipt_payload(topup, student, msg), status=200)
 
         if outcome in ("FAILED", "NOT_PENDING"):
             return JsonResponse(
@@ -532,7 +542,7 @@ def verify_parent_topup(request):
         )
 
 
-@login_required(login_url="/admin/login/")
+@login_required(login_url="/staff/login/")
 @require_POST
 def check_student_balance(request):
     """
@@ -595,9 +605,33 @@ def parent_topup_page(request):
 
 @ensure_csrf_cookie
 @never_cache
-@login_required(login_url="/admin/login/")
+@login_required(login_url="/staff/login/")
 def canteen_pos_page(request):
-    return render(request, "wallet/canteen_pos.html")
+    today = timezone.localdate()
+    shift_qs = CanteenOrder.objects.filter(
+        attendant=request.user, created_at__date=today
+    )
+    shift_agg = shift_qs.aggregate(total=Sum("amount"), count=Count("id"))
+    recent_orders = [
+        {
+            "order_ref": str(order.id)[:8].upper(),
+            "student_name": order.student.full_name,
+            "student_reg_no": order.student.student_reg_no,
+            "amount": int(order.amount),
+            "items_note": order.items_note,
+            "time": timezone.localtime(order.created_at).strftime("%H:%M"),
+        }
+        for order in shift_qs.select_related("student").order_by("-created_at")[:5]
+    ]
+    return render(
+        request,
+        "wallet/canteen_pos.html",
+        {
+            "shift_total": int(shift_agg["total"] or 0),
+            "shift_count": shift_agg["count"] or 0,
+            "recent_orders_json": json.dumps(recent_orders),
+        },
+    )
 
 
 @require_GET
@@ -699,7 +733,7 @@ self.addEventListener("fetch", (event) => {{
     return HttpResponse(sw_js, content_type="application/javascript")
 
 
-@login_required(login_url="/admin/login/")
+@login_required(login_url="/staff/login/")
 @require_GET
 def pos_student_search(request):
     """
@@ -753,7 +787,7 @@ def wallet_card_pages(students, page_size=8):
     return [cards[index : index + page_size] for index in range(0, len(cards), page_size)]
 
 
-@staff_member_required
+@staff_member_required(login_url="/staff/login/")
 def wallet_cards_page(request):
     students = (
         Student.objects.filter(is_active=True)
@@ -829,7 +863,74 @@ def _run_inline_reconciliation(view_name: str):
         logger.warning("Inline reconcile failed on %s load", view_name, exc_info=True)
 
 
-@staff_member_required(login_url="/admin/login/")
+def _build_settlement_csv(
+    report_date, schools_data, attendant_breakdown, recent_cash_topups
+) -> HttpResponse:
+    """Builds a downloadable CSV settlement export for school auditors."""
+    buffer = io.StringIO()
+    writer = csv.writer(buffer)
+    writer.writerow([f"CanteenPay Daily Settlement Report - {report_date:%Y-%m-%d}"])
+    writer.writerow([])
+    writer.writerow(
+        [
+            "School Name",
+            "Online Top-Ups (UGX)",
+            "Online Txn Count",
+            "Bursar Cash Top-Ups (UGX)",
+            "Cash Receipt Count",
+            "Net Canteen Sales (UGX)",
+            "Sale Count",
+            "Refunds (UGX)",
+            "Platform Fees (UGX)",
+        ]
+    )
+    for row in schools_data:
+        writer.writerow(
+            [
+                row["school_name"],
+                int(row["online_topups"]),
+                row["online_topup_count"],
+                int(row["cash_topups"]),
+                row["cash_topup_count"],
+                int(row["canteen_sales"]),
+                row["order_count"],
+                int(row["refund_total"]),
+                int(row["platform_revenue"]),
+            ]
+        )
+
+    writer.writerow([])
+    writer.writerow(["Per-Attendant Canteen Sales Breakdown"])
+    writer.writerow(["Attendant", "Sales Count", "Gross Sales (UGX)"])
+    for att in attendant_breakdown:
+        writer.writerow([att["username"], att["order_count"], int(att["total_sales"])])
+
+    writer.writerow([])
+    writer.writerow(["Bursar Cash-In Log"])
+    writer.writerow(
+        ["Time", "Code", "Student", "School", "Amount (UGX)", "Receipt Note", "Received By"]
+    )
+    for cash in recent_cash_topups:
+        writer.writerow(
+            [
+                timezone.localtime(cash.created_at).strftime("%H:%M"),
+                cash.student.student_reg_no,
+                cash.student.full_name,
+                cash.student.school.name,
+                int(cash.amount),
+                cash.receipt_note or "",
+                cash.received_by.username if cash.received_by else "staff",
+            ]
+        )
+
+    response = HttpResponse(buffer.getvalue(), content_type="text/csv; charset=utf-8")
+    response["Content-Disposition"] = (
+        f'attachment; filename="canteenpay-settlement-{report_date:%Y-%m-%d}.csv"'
+    )
+    return response
+
+
+@staff_member_required(login_url="/staff/login/")
 def bursar_daily_report(request):
     """
     Displays today's online top-ups, bursar desk cash top-ups, and canteen sales,
@@ -843,7 +944,7 @@ def bursar_daily_report(request):
     if request.method == "POST":
         reg_no = (request.POST.get("student_reg_no") or "").strip()
         receipt_note = (request.POST.get("receipt_note") or "").strip()[:255]
-        raw_amount = (request.POST.get("amount") or "").strip()
+        raw_amount = (request.POST.get("amount") or "").replace(",", "").strip()
 
         try:
             amount = Decimal(raw_amount)
@@ -947,6 +1048,32 @@ def bursar_daily_report(request):
         .select_related("student", "student__school", "received_by")
         .order_by("-created_at")[:50]
     )
+    total_cash_collected = (
+        BursarCashTopUp.objects.filter(created_at__date=report_date).aggregate(
+            total=Sum("amount")
+        )["total"]
+        or Decimal("0.00")
+    )
+
+    attendant_rows = (
+        CanteenOrder.objects.filter(created_at__date=report_date)
+        .values("attendant__username")
+        .annotate(total_sales=Sum("amount"), order_count=Count("id"))
+        .order_by("-total_sales")
+    )
+    attendant_breakdown = [
+        {
+            "username": row["attendant__username"] or "Unassigned",
+            "total_sales": row["total_sales"] or Decimal("0.00"),
+            "order_count": row["order_count"] or 0,
+        }
+        for row in attendant_rows
+    ]
+
+    if (request.GET.get("export") or "").strip().lower() == "csv":
+        return _build_settlement_csv(
+            report_date, schools_data, attendant_breakdown, recent_cash_topups
+        )
 
     return render(
         request,
@@ -954,12 +1081,14 @@ def bursar_daily_report(request):
         {
             "report_date": report_date,
             "schools_data": schools_data,
+            "attendant_breakdown": attendant_breakdown,
             "recent_cash_topups": recent_cash_topups,
+            "total_cash_collected": total_cash_collected,
         },
     )
 
 
-@staff_member_required
+@staff_member_required(login_url="/staff/login/")
 def daily_topup_noticeboard(request):
     """
     Generates a privacy-safe morning noticeboard list of students whose
@@ -996,6 +1125,19 @@ def daily_topup_noticeboard(request):
             "credited_students": credited_students,
         },
     )
+
+
+@require_GET
+@never_cache
+def healthz(request):
+    """Lightweight health-check endpoint verifying app & database readiness."""
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute("SELECT 1")
+        return JsonResponse({"status": "ok", "database": "ok"}, status=200)
+    except Exception:
+        logger.exception("Health check database query failed")
+        return JsonResponse({"status": "error", "database": "unavailable"}, status=503)
 
 
 @csrf_exempt

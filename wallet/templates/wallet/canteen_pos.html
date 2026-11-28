@@ -1,10 +1,10 @@
 {% load static %}
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-theme="dark">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta name="theme-color" content="#0f172a">
+    <meta name="theme-color" id="metaThemeColor" content="#0f172a">
     <meta name="mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -15,13 +15,82 @@
     <title>CanteenPay | Canteen Scanner POS</title>
     <script src="{% static 'wallet/js/html5-qrcode.min.js' %}"></script>
     <style>
+        /* ── Theme variables ── */
+        :root, [data-theme="dark"] {
+            --bg:             #111827;
+            --card:           #1f2937;
+            --text:           #f9fafb;
+            --label:          #d1d5db;
+            --muted:          #9ca3af;
+            --input-bg:       #374151;
+            --input-brd:      #374151;
+            --input-txt:      #ffffff;
+            --bar-bg:         #0f172a;
+            --bar-attendant:  #a7f3d0;
+            --bar-att-span:   #6ee7b7;
+            --nav-bg:         #1e3a5f;
+            --nav-brd:        #1e40af;
+            --nav-txt:        #93c5fd;
+            --status-bg:      #374151;
+            --status-txt:     #9ca3af;
+            --info-card-bg:   #374151;
+            --btn-sec-bg:     #374151;
+            --btn-sec-txt:    #e5e7eb;
+            --btn-sec-brd:    #4b5563;
+            --btn-sec-hover:  #4b5563;
+            --results-bg:     #374151;
+            --results-brd:    #4b5563;
+            --results-sub:    #9ca3af;
+            --alert-ok-bg:    #065f46;
+            --alert-ok-txt:   #a7f3d0;
+            --alert-err-bg:   #7f1d1d;
+            --alert-err-txt:  #fecaca;
+            --card-shadow:    0 4px 16px rgba(0, 0, 0, 0.35);
+        }
+        [data-theme="light"] {
+            --bg:             #f3f4f6;
+            --card:           #ffffff;
+            --text:           #111827;
+            --label:          #374151;
+            --muted:          #6b7280;
+            --input-bg:       #f9fafb;
+            --input-brd:      #d1d5db;
+            --input-txt:      #111827;
+            --bar-bg:         #0f172a;
+            --bar-attendant:  #a7f3d0;
+            --bar-att-span:   #6ee7b7;
+            --nav-bg:         #1e3a5f;
+            --nav-brd:        #1e40af;
+            --nav-txt:        #93c5fd;
+            --status-bg:      #e5e7eb;
+            --status-txt:     #374151;
+            --info-card-bg:   #ecfdf5;
+            --btn-sec-bg:     #f3f4f6;
+            --btn-sec-txt:    #1f2937;
+            --btn-sec-brd:    #d1d5db;
+            --btn-sec-hover:  #e5e7eb;
+            --results-bg:     #f9fafb;
+            --results-brd:    #e5e7eb;
+            --results-sub:    #6b7280;
+            --alert-ok-bg:    #d1fae5;
+            --alert-ok-txt:   #065f46;
+            --alert-err-bg:   #fef2f2;
+            --alert-err-txt:  #991b1b;
+            --card-shadow:    0 4px 14px rgba(0, 0, 0, 0.08);
+        }
+
         /* ── Base ── */
         *, *::before, *::after { box-sizing: border-box; }
-        body { font-family: system-ui, sans-serif; background: #111827; color: #f9fafb; margin: 0; padding: 0; }
+        body {
+            font-family: system-ui, sans-serif;
+            background: var(--bg); color: var(--text);
+            margin: 0; padding: 0;
+            transition: background 0.25s, color 0.25s;
+        }
 
         /* ── Staff header bar ── */
         .staff-bar {
-            background: #0f172a;
+            background: var(--bar-bg);
             border-bottom: 2px solid #10b981;
             padding: 8px 16px;
             display: flex;
@@ -30,15 +99,22 @@
             gap: 10px;
             flex-wrap: wrap;
         }
-        .staff-bar .attendant { font-size: 0.85rem; color: #a7f3d0; font-weight: 700; white-space: nowrap; }
-        .staff-bar .attendant span { color: #6ee7b7; }
+        .staff-bar .attendant { font-size: 0.85rem; color: var(--bar-attendant); font-weight: 700; white-space: nowrap; }
+        .staff-bar .attendant span { color: var(--bar-att-span); }
         .staff-bar nav { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
         .staff-bar nav a {
-            font-size: 0.78rem; color: #93c5fd; text-decoration: none;
-            padding: 4px 9px; border: 1px solid #1e40af; border-radius: 5px;
-            background: #1e3a5f; white-space: nowrap; transition: background 0.15s;
+            font-size: 0.78rem; color: var(--nav-txt); text-decoration: none;
+            padding: 4px 9px; border: 1px solid var(--nav-brd); border-radius: 5px;
+            background: var(--nav-bg); white-space: nowrap; transition: background 0.15s;
         }
         .staff-bar nav a:hover { background: #1d4ed8; color: #fff; }
+        .staff-bar .bar-actions { display: flex; gap: 6px; align-items: center; }
+        #themeToggle {
+            font-size: 0.78rem; color: #e5e7eb; background: #1e293b;
+            border: 1px solid #475569; border-radius: 5px; padding: 4px 9px;
+            cursor: pointer; font-weight: 700; width: auto; margin: 0; white-space: nowrap;
+        }
+        #themeToggle:hover { background: #334155; }
         .staff-bar .logout-form button {
             font-size: 0.78rem; color: #fca5a5; background: #3f1515;
             border: 1px solid #7f1d1d; border-radius: 5px; padding: 4px 10px;
@@ -53,64 +129,113 @@
         }
         #installPwaBtn:hover { background: #34d399; }
 
+        /* ── Warning banners ── */
+        .top-warn {
+            display: none; padding: 9px 14px; font-size: 0.84rem;
+            font-weight: 700; text-align: center;
+        }
+        #offlineBanner { background: #fef3c7; color: #92400e; border-bottom: 1px solid #f59e0b; }
+        #sessionBanner { background: #fef2f2; color: #991b1b; border-bottom: 1px solid #ef4444; cursor: pointer; }
+
         /* ── Main card ── */
-        .container { max-width: 460px; margin: 16px auto; background: #1f2937; padding: 20px; border-radius: 12px; }
+        .container {
+            max-width: 460px; margin: 16px auto;
+            background: var(--card); padding: 20px;
+            border-radius: 12px; box-shadow: var(--card-shadow);
+        }
         h2 { margin-top: 0; text-align: center; color: #10b981; }
 
         /* ── Camera preview ── */
         #reader {
             width: 100%; border-radius: 8px; overflow: hidden;
-            background: #000; min-height: 56px;   /* collapses to status bar when no preview */
+            background: #000; min-height: 56px;
         }
-        /* Hide html5-qrcode internal header/footer chrome we don't need */
         #reader img, #reader select { display: none !important; }
 
         /* ── Camera status bar ── */
         #cameraStatus {
             margin-top: 6px; padding: 7px 10px; border-radius: 6px;
             font-size: 0.82rem; font-weight: 600; text-align: center;
-            background: #374151; color: #9ca3af;
+            background: var(--status-bg); color: var(--status-txt);
         }
         #cameraStatus.ready  { background: #064e3b; color: #6ee7b7; }
         #cameraStatus.locked { background: #78350f; color: #fde68a; }
         #cameraStatus.error  { background: #7f1d1d; color: #fca5a5; }
         #switchCameraBtn {
             display: none; margin-top: 6px; padding: 8px 10px;
-            background: #374151; color: #e5e7eb; border: 1px solid #4b5563;
+            background: var(--btn-sec-bg); color: var(--btn-sec-txt);
+            border: 1px solid var(--btn-sec-brd);
             border-radius: 6px; font-size: 0.82rem; font-weight: 600;
         }
-        #switchCameraBtn:hover:not(:disabled) { background: #4b5563; color: #fff; }
+        #switchCameraBtn:hover:not(:disabled) { background: var(--btn-sec-hover); }
 
         /* ── Form controls ── */
-        label { display: block; margin: 12px 0 4px; font-size: 0.9rem; color: #d1d5db; }
-        input { width: 100%; padding: 12px; border-radius: 8px; border: 1px solid #374151; background: #374151; color: #fff; font-size: 1.1rem; }
+        label { display: block; margin: 12px 0 4px; font-size: 0.9rem; color: var(--label); font-weight: 600; }
+        input {
+            width: 100%; padding: 12px; border-radius: 8px;
+            border: 1px solid var(--input-brd); background: var(--input-bg);
+            color: var(--input-txt); font-size: 1.1rem;
+        }
         input:focus { outline: 2px solid #10b981; border-color: #10b981; }
+        .label-row {
+            display: flex; justify-content: space-between; align-items: baseline;
+            margin: 12px 0 4px;
+        }
+        .label-row label { margin: 0; }
+        .char-counter { font-size: 0.78rem; color: var(--muted); font-weight: 600; }
+        .char-counter.warn { color: #f59e0b; }
 
         /* ── Buttons ── */
-        button { width: 100%; padding: 14px; background: #10b981; color: #fff; font-weight: 700; border: none; border-radius: 8px; font-size: 1.1rem; margin-top: 16px; cursor: pointer; transition: background 0.15s; }
+        button {
+            width: 100%; padding: 14px; background: #10b981; color: #fff;
+            font-weight: 700; border: none; border-radius: 8px;
+            font-size: 1.1rem; margin-top: 16px; cursor: pointer; transition: background 0.15s;
+        }
         button:hover:not(:disabled) { background: #059669; }
         button:disabled { opacity: 0.6; cursor: not-allowed; }
+        .btn-spinner {
+            display: inline-block; width: 16px; height: 16px;
+            border: 2px solid rgba(255,255,255,0.35); border-top-color: #fff;
+            border-radius: 50%; animation: spin 0.7s linear infinite;
+            vertical-align: middle; margin-right: 8px;
+        }
+        @keyframes spin { to { transform: rotate(360deg); } }
 
         /* ── Clear / Next Student button ── */
-        #clearBtn { display: none; background: #374151; color: #d1d5db; border: 1px solid #4b5563; font-size: 0.95rem; padding: 11px 14px; margin-top: 10px; }
-        #clearBtn:hover:not(:disabled) { background: #4b5563; color: #fff; }
+        #clearBtn {
+            display: none; background: var(--btn-sec-bg); color: var(--btn-sec-txt);
+            border: 1px solid var(--btn-sec-brd); font-size: 0.95rem; padding: 11px 14px; margin-top: 10px;
+        }
+        #clearBtn:hover:not(:disabled) { background: var(--btn-sec-hover); }
 
         /* ── Balance button ── */
         #balanceBtn { background: #3b82f6; margin-top: 10px; }
         #balanceBtn:hover:not(:disabled) { background: #2563eb; }
 
         /* ── Student info card ── */
-        .info-card { background: #374151; padding: 12px; border-radius: 8px; margin-top: 12px; display: none; }
+        .info-card {
+            background: var(--info-card-bg); padding: 12px; border-radius: 8px;
+            margin-top: 12px; display: none; border: 1px solid var(--btn-sec-brd);
+        }
 
         /* ── Name search results ── */
         .results { margin-top: 6px; border-radius: 8px; overflow: hidden; }
-        .results button { width: 100%; text-align: left; margin: 0; border-radius: 0; background: #374151; font-size: 0.95rem; font-weight: 600; padding: 10px 12px; border-bottom: 1px solid #4b5563; margin-top: 0; }
-        .results button span { display: block; color: #9ca3af; font-size: 0.8rem; font-weight: 500; }
+        .results button {
+            width: 100%; text-align: left; margin: 0; border-radius: 0;
+            background: var(--results-bg); color: var(--text);
+            font-size: 0.95rem; font-weight: 600; padding: 10px 12px;
+            border-bottom: 1px solid var(--results-brd); margin-top: 0;
+        }
+        .results button:hover { background: var(--btn-sec-hover); }
+        .results button span { display: block; color: var(--results-sub); font-size: 0.8rem; font-weight: 500; }
 
         /* ── Alert boxes ── */
-        .alert { padding: 12px; border-radius: 8px; margin-top: 14px; font-weight: 600; text-align: center; display: none; white-space: pre-line; }
-        .ok  { background: #065f46; color: #a7f3d0; }
-        .err { background: #7f1d1d; color: #fecaca; }
+        .alert {
+            padding: 12px; border-radius: 8px; margin-top: 14px;
+            font-weight: 600; text-align: center; display: none; white-space: pre-line;
+        }
+        .ok  { background: var(--alert-ok-bg); color: var(--alert-ok-txt); }
+        .err { background: var(--alert-err-bg); color: var(--alert-err-txt); }
 
         /* ── Charge confirmation banner ── */
         .confirm-banner {
@@ -119,9 +244,30 @@
             border: 2px solid #f59e0b; font-size: 1.05rem;
             font-weight: 800; text-align: center;
         }
+
+        /* ── Toast notifications ── */
+        #toastContainer {
+            position: fixed; top: 56px; right: 16px; z-index: 9999;
+            display: flex; flex-direction: column; gap: 8px; pointer-events: none;
+        }
+        .toast {
+            padding: 11px 15px; border-radius: 8px;
+            font-size: 0.88rem; font-weight: 600; max-width: 320px;
+            box-shadow: 0 4px 16px rgba(0,0,0,0.28);
+            opacity: 0; transition: opacity 0.25s, transform 0.25s;
+            transform: translateX(40px); pointer-events: auto;
+        }
+        .toast.show { opacity: 1; transform: translateX(0); }
+        .toast-ok   { background: #d1fae5; color: #065f46; border-left: 4px solid #059669; }
+        .toast-err  { background: #fef2f2; color: #991b1b; border-left: 4px solid #ef4444; }
+        .toast-info { background: #eff6ff; color: #1e40af; border-left: 4px solid #3b82f6; }
+        .toast-warn { background: #fef3c7; color: #92400e; border-left: 4px solid #f59e0b; }
     </style>
 </head>
 <body>
+
+<!-- Toast container -->
+<div id="toastContainer"></div>
 
 <!-- ── Staff header bar ─────────────────────────────────────────────────── -->
 <div class="staff-bar">
@@ -132,11 +278,18 @@
         <a href="{% url 'wallet_cards_page' %}">🪪 Wallet Cards</a>
         <button id="installPwaBtn" type="button" onclick="installPosApp()">📲 Install App</button>
     </nav>
-    <form class="logout-form" method="post" action="{% url 'admin:logout' %}">
-        {% csrf_token %}
-        <button type="submit">⏏ Log Out</button>
-    </form>
+    <div class="bar-actions">
+        <button id="themeToggle" type="button" onclick="toggleTheme()" title="Toggle dark / light mode">☀️ Light</button>
+        <form class="logout-form" method="post" action="{% url 'admin:logout' %}">
+            {% csrf_token %}
+            <button type="submit">⏏ Log Out</button>
+        </form>
+    </div>
 </div>
+
+<!-- Offline & session banners -->
+<div id="offlineBanner" class="top-warn">⚠️ No internet connection — charges will fail until reconnected.</div>
+<div id="sessionBanner" class="top-warn" onclick="window.location.reload()">⏳ Idle over 2 hours — session may have expired. Tap here to refresh.</div>
 
 <!-- ── Main POS card ─────────────────────────────────────────────────────── -->
 <div class="container">
@@ -155,15 +308,18 @@
     <label for="scannedId">CanteenPay code (scan the card or type it)</label>
     <input type="text" id="scannedId" placeholder="e.g. ARI-0042" autocomplete="off">
 
-    <div id="studentInfo" class="info-card"></div>
+    <div id="studentInfo" class="info-card" role="status" aria-live="polite"></div>
 
     <label for="orderAmount">Purchase Amount (UGX)</label>
-    <!-- inputmode="numeric" opens the numeric keypad directly on Android -->
-    <input type="number" id="orderAmount" placeholder="e.g. 2500"
-           min="100" step="100" inputmode="numeric" pattern="[0-9]*" autocomplete="off">
+    <!-- inputmode="numeric" opens the numeric keypad directly on Android; text allows live comma formatting -->
+    <input type="text" id="orderAmount" placeholder="e.g. 2,500"
+           inputmode="numeric" pattern="[0-9,]*" autocomplete="off">
 
-    <label for="itemsNote">Items Bought (Optional)</label>
-    <input type="text" id="itemsNote" placeholder="e.g. Chapati + Soda" autocomplete="off">
+    <div class="label-row">
+        <label for="itemsNote">Items Bought (Optional)</label>
+        <span id="itemsCounter" class="char-counter">0 / 255</span>
+    </div>
+    <input type="text" id="itemsNote" maxlength="255" placeholder="e.g. Chapati + Soda" autocomplete="off">
 
     <!-- Confirmation banner — shown as soon as student + amount are known -->
     <div id="confirmChargeBanner" class="confirm-banner" role="status" aria-live="polite"></div>
@@ -177,13 +333,82 @@
     <button id="balanceBtn" type="button" onclick="checkBalanceOnly()">Check Balance Only (Requires PIN)</button>
     <button id="clearBtn"   type="button" onclick="resetForNextStudent()">✕ Clear / Next Student</button>
 
-    <div id="alertBox" class="alert"></div>
+    <div id="alertBox" class="alert" role="status" aria-live="polite"></div>
 </div>
 
 <script>
     /* ═══════════════════════════════════════════════════════════════════════
+       Theme — dark / light with shared localStorage preference
+    ════════════════════════════════════════════════════════════════════════ */
+    const THEME_KEY = "canteenpay_theme";
+
+    function applyTheme(dark) {
+        document.documentElement.setAttribute("data-theme", dark ? "dark" : "light");
+        const btn = document.getElementById("themeToggle");
+        if (btn) btn.textContent = dark ? "☀️ Light" : "🌙 Dark";
+        const metaTheme = document.getElementById("metaThemeColor");
+        if (metaTheme) metaTheme.setAttribute("content", dark ? "#0f172a" : "#ffffff");
+        try { localStorage.setItem(THEME_KEY, dark ? "dark" : "light"); } catch (_) {}
+    }
+
+    function toggleTheme() {
+        const isDark = document.documentElement.getAttribute("data-theme") !== "light";
+        applyTheme(!isDark);
+    }
+
+    (function initTheme() {
+        let saved = null;
+        try { saved = localStorage.getItem(THEME_KEY); } catch (_) {}
+        // Default POS to dark unless user explicitly chose light
+        applyTheme(saved !== "light");
+    })();
+
+    /* ═══════════════════════════════════════════════════════════════════════
+       Toast notification helper
+    ════════════════════════════════════════════════════════════════════════ */
+    function showToast(message, type = "info", durationMs = 4000) {
+        const container = document.getElementById("toastContainer");
+        const toast = document.createElement("div");
+        toast.className = `toast toast-${type}`;
+        toast.textContent = message;
+        container.appendChild(toast);
+        requestAnimationFrame(() => {
+            requestAnimationFrame(() => toast.classList.add("show"));
+        });
+        setTimeout(() => {
+            toast.classList.remove("show");
+            setTimeout(() => toast.remove(), 300);
+        }, durationMs);
+    }
+
+    /* ═══════════════════════════════════════════════════════════════════════
+       Offline & Idle Session Detection
+    ════════════════════════════════════════════════════════════════════════ */
+    function updateOfflineBanner() {
+        document.getElementById("offlineBanner").style.display = navigator.onLine ? "none" : "block";
+    }
+    window.addEventListener("online",  () => { updateOfflineBanner(); showToast("Back online ✓", "ok", 3000); });
+    window.addEventListener("offline", () => { updateOfflineBanner(); showToast("⚠️ Offline — charges will fail until reconnected.", "warn", 6000); });
+    updateOfflineBanner();
+
+    const IDLE_WARN_MS = 2 * 60 * 60 * 1000; // 2 hours
+    let idleTimer = null;
+    function bumpActivityTimer() {
+        clearTimeout(idleTimer);
+        document.getElementById("sessionBanner").style.display = "none";
+        idleTimer = setTimeout(() => {
+            document.getElementById("sessionBanner").style.display = "block";
+            showToast("Session idle > 2 hours — refresh if login prompt appears.", "warn", 7000);
+        }, IDLE_WARN_MS);
+    }
+    ["click", "keydown", "input", "touchstart"].forEach(evt =>
+        document.addEventListener(evt, bumpActivityTimer, { passive: true })
+    );
+    bumpActivityTimer();
+
+    /* ═══════════════════════════════════════════════════════════════════════
        CSRF helper
-    ═══════════════════════════════════════════════════════════════════════ */
+    ════════════════════════════════════════════════════════════════════════ */
     function getCookie(name) {
         let v = null;
         if (document.cookie) {
@@ -203,7 +428,7 @@
        Sensory feedback — beep + vibration
        AudioContext requires a prior user gesture; the camera-start click
        (or any tap on the page) is sufficient to unlock it.
-    ═══════════════════════════════════════════════════════════════════════ */
+    ════════════════════════════════════════════════════════════════════════ */
     function playBeep(frequency = 1046, durationSec = 0.12, volume = 0.35) {
         try {
             const ctx  = new (window.AudioContext || window.webkitAudioContext)();
@@ -227,7 +452,7 @@
     /* ═══════════════════════════════════════════════════════════════════════
        QR Scanner — Html5Qrcode (direct API, NOT Html5QrcodeScanner widget)
        This auto-starts the rear camera on page load with no extra button tap.
-    ═══════════════════════════════════════════════════════════════════════ */
+    ════════════════════════════════════════════════════════════════════════ */
     const qrScanner = new Html5Qrcode("reader");
     const cameraStatus = document.getElementById("cameraStatus");
     const switchCameraBtn = document.getElementById("switchCameraBtn");
@@ -260,11 +485,14 @@
     function onScanSuccess(decodedText) {
         if (scanLocked) return;          // drop all repeat reads of same card
         scanLocked = true;
+        cancelAutoReset();
 
         // Fill the CanteenPay code field and trigger student lookup
-        scannedId.value = decodedText.trim();
+        const code = decodedText.trim();
+        scannedId.value = code;
         resetCheckoutKey();
         fetchStudentInfo();
+        showToast(`💳 Card scanned: ${code}`, "info", 2200);
 
         // ── Sensory confirmation ─────────────────────────────────────────
         playBeep(1046, 0.12, 0.35);      // crisp single beep (C6)
@@ -405,7 +633,7 @@
 
     /* ═══════════════════════════════════════════════════════════════════════
        Idempotency key — fresh UUID per transaction
-    ═══════════════════════════════════════════════════════════════════════ */
+    ════════════════════════════════════════════════════════════════════════ */
     function generateIdempotencyKey() {
         return window.crypto?.randomUUID?.() || `pos-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
     }
@@ -414,29 +642,60 @@
 
     /* ═══════════════════════════════════════════════════════════════════════
        DOM refs & state
-    ═══════════════════════════════════════════════════════════════════════ */
+    ════════════════════════════════════════════════════════════════════════ */
     const nameSearch          = document.getElementById("nameSearch");
     const searchResults       = document.getElementById("searchResults");
     const scannedId           = document.getElementById("scannedId");
     const orderAmount         = document.getElementById("orderAmount");
+    const itemsNote           = document.getElementById("itemsNote");
+    const itemsCounter        = document.getElementById("itemsCounter");
     const confirmChargeBanner = document.getElementById("confirmChargeBanner");
     const alertBox            = document.getElementById("alertBox");
     const clearBtn            = document.getElementById("clearBtn");
 
     let selectedStudent = { name: "", classStream: "" };
+    let autoResetTimer = null;
+
+    function cancelAutoReset() {
+        if (autoResetTimer) {
+            clearInterval(autoResetTimer);
+            autoResetTimer = null;
+            clearBtn.textContent = "✕ Clear / Next Student";
+        }
+    }
 
     // Auto-focus code field on load for USB/Bluetooth scanner keyboards
     scannedId.focus();
 
     /* ═══════════════════════════════════════════════════════════════════════
-       Confirm-charge banner
-    ═══════════════════════════════════════════════════════════════════════ */
+       Amount formatting & Confirm-charge banner
+    ════════════════════════════════════════════════════════════════════════ */
+    function rawOrderAmount() {
+        const digits = orderAmount.value.replace(/\D/g, "");
+        return digits ? parseInt(digits, 10) : NaN;
+    }
+
+    function formatOrderAmountInput() {
+        const digits = orderAmount.value.replace(/\D/g, "");
+        const num = digits ? parseInt(digits, 10) : NaN;
+        if (!isNaN(num) && num > 0) {
+            const selStart = orderAmount.selectionStart || 0;
+            const beforeLen = orderAmount.value.length;
+            orderAmount.value = num.toLocaleString("en-UG");
+            const afterLen = orderAmount.value.length;
+            const nextPos = Math.max(0, selStart + (afterLen - beforeLen));
+            try { orderAmount.setSelectionRange(nextPos, nextPos); } catch (_) {}
+        } else {
+            orderAmount.value = "";
+        }
+    }
+
     function updateConfirmChargeBanner() {
-        const amountVal = Number(orderAmount.value);
-        if (selectedStudent.name && amountVal > 0) {
+        const amountVal = rawOrderAmount();
+        if (selectedStudent.name && !isNaN(amountVal) && amountVal > 0) {
             const cls = selectedStudent.classStream ? ` (${selectedStudent.classStream})` : "";
             confirmChargeBanner.textContent =
-                `⚠ Confirm Charge: UGX ${amountVal.toLocaleString()} to ${selectedStudent.name}${cls}`;
+                `⚠ Confirm Charge: UGX ${amountVal.toLocaleString("en-UG")} to ${selectedStudent.name}${cls}`;
             confirmChargeBanner.style.display = "block";
         } else {
             confirmChargeBanner.textContent = "";
@@ -446,8 +705,9 @@
 
     /* ═══════════════════════════════════════════════════════════════════════
        Input listeners
-    ═══════════════════════════════════════════════════════════════════════ */
+    ════════════════════════════════════════════════════════════════════════ */
     scannedId.addEventListener("input", () => {
+        cancelAutoReset();
         resetCheckoutKey();
         selectedStudent = { name: "", classStream: "" };
         updateConfirmChargeBanner();
@@ -457,15 +717,23 @@
         if (e.key === "Enter") { e.preventDefault(); fetchStudentInfo(); }
     });
     orderAmount.addEventListener("input", () => {
+        cancelAutoReset();
+        formatOrderAmountInput();
         resetCheckoutKey();
         updateConfirmChargeBanner();
+    });
+    itemsNote.addEventListener("input", () => {
+        const len = itemsNote.value.length;
+        itemsCounter.textContent = `${len} / 255`;
+        itemsCounter.classList.toggle("warn", len >= 220);
     });
 
     /* ═══════════════════════════════════════════════════════════════════════
        Name search
-    ═══════════════════════════════════════════════════════════════════════ */
+    ════════════════════════════════════════════════════════════════════════ */
     let searchTimer = null;
     nameSearch.addEventListener("input", () => {
+        cancelAutoReset();
         clearTimeout(searchTimer);
         const q = nameSearch.value.trim();
         if (q.length < 2) { searchResults.innerHTML = ""; return; }
@@ -473,25 +741,28 @@
     });
 
     async function searchStudents(query) {
-        const res = await fetch(`/api/pos/students/search/?q=${encodeURIComponent(query)}`);
-        searchResults.innerHTML = "";
-        if (!res.ok) return;
-        const data = await res.json();
-        (data.results || []).forEach((row) => {
-            const btn = document.createElement("button");
-            btn.type = "button";
-            const title = document.createElement("strong");
-            title.textContent = `${row.full_name} — ${row.class_stream || "No class"}`;
-            const meta = document.createElement("span");
-            meta.textContent = `${row.student_reg_no} · ${row["school__name"] || ""}`;
-            btn.appendChild(title);
-            btn.appendChild(meta);
-            btn.addEventListener("click", () => selectStudent(row));
-            searchResults.appendChild(btn);
-        });
+        try {
+            const res = await fetch(`/api/pos/students/search/?q=${encodeURIComponent(query)}`);
+            searchResults.innerHTML = "";
+            if (!res.ok) return;
+            const data = await res.json();
+            (data.results || []).forEach((row) => {
+                const btn = document.createElement("button");
+                btn.type = "button";
+                const title = document.createElement("strong");
+                title.textContent = `${row.full_name} — ${row.class_stream || "No class"}`;
+                const meta = document.createElement("span");
+                meta.textContent = `${row.student_reg_no} · ${row["school__name"] || ""}`;
+                btn.appendChild(title);
+                btn.appendChild(meta);
+                btn.addEventListener("click", () => selectStudent(row));
+                searchResults.appendChild(btn);
+            });
+        } catch (_) {}
     }
 
     function selectStudent(row) {
+        cancelAutoReset();
         scannedId.value = row.student_reg_no;
         resetCheckoutKey();
         selectedStudent = { name: row.full_name || "", classStream: row.class_stream || "" };
@@ -503,19 +774,20 @@
             `${row.student_reg_no} · student enters their 4-digit PIN`,
             false
         );
+        showToast(`✓ ${row.full_name} selected`, "ok", 2200);
         document.getElementById("studentPin").focus();
     }
 
     /* ═══════════════════════════════════════════════════════════════════════
        Student info banner
-    ═══════════════════════════════════════════════════════════════════════ */
+    ════════════════════════════════════════════════════════════════════════ */
     function showStudentBanner(titleText, subtitleText, isError) {
         const infoDiv = document.getElementById("studentInfo");
         infoDiv.style.display = "block";
         infoDiv.innerHTML = "";
         if (isError) {
             const s = document.createElement("span");
-            s.style.color = "#fca5a5";
+            s.style.color = "#ef4444";
             s.textContent = titleText;
             infoDiv.appendChild(s);
             return;
@@ -523,45 +795,55 @@
         const strong = document.createElement("strong");
         strong.textContent = titleText;
         const hint = document.createElement("span");
-        hint.style.cssText = "display:block; color:#10b981; margin-top:4px; font-size:0.88rem;";
+        hint.style.cssText = "display:block; color:#10b981; margin-top:4px; font-size:0.88rem; font-weight:600;";
         hint.textContent = subtitleText;
         infoDiv.appendChild(strong);
         infoDiv.appendChild(hint);
     }
 
-    async function fetchStudentInfo() {
+    async function fetchStudentInfo(silentToast = false) {
         const regNo = scannedId.value.trim();
         if (!regNo) {
             selectedStudent = { name: "", classStream: "" };
             updateConfirmChargeBanner();
             return;
         }
-        const res  = await fetch(`/api/student/lookup/?reg_no=${encodeURIComponent(regNo)}`);
-        const data = await res.json();
-        if (res.ok) {
-            selectedStudent = { name: data.full_name || "", classStream: data.class_stream || "" };
-            updateConfirmChargeBanner();
-            const cls = data.class_stream ? ` — ${data.class_stream}` : "";
-            showStudentBanner(
-                `${data.full_name}${cls} (${data.school})`,
-                "Code verified — student enters their 4-digit PIN",
-                false
-            );
-        } else {
-            selectedStudent = { name: "", classStream: "" };
-            updateConfirmChargeBanner();
-            showStudentBanner(data.error || "Student ID not found.", "", true);
+        try {
+            const res  = await fetch(`/api/student/lookup/?reg_no=${encodeURIComponent(regNo)}`);
+            const data = await res.json();
+            if (res.ok) {
+                selectedStudent = { name: data.full_name || "", classStream: data.class_stream || "" };
+                updateConfirmChargeBanner();
+                const cls = data.class_stream ? ` — ${data.class_stream}` : "";
+                showStudentBanner(
+                    `${data.full_name}${cls} (${data.school})`,
+                    "Code verified — student enters their 4-digit PIN",
+                    false
+                );
+                if (!silentToast) showToast(`✓ ${data.full_name}${cls}`, "ok", 2200);
+            } else {
+                selectedStudent = { name: "", classStream: "" };
+                updateConfirmChargeBanner();
+                const errText = data.error || "Student ID not found.";
+                showStudentBanner(errText, "", true);
+                if (!silentToast) showToast(errText, "err", 3500);
+            }
+        } catch (_) {
+            if (!silentToast) showToast("Could not look up student — check connection.", "warn", 3500);
         }
     }
 
     /* ═══════════════════════════════════════════════════════════════════════
        Reset / Next Student
        Also resumes the scanner so it's immediately ready for the next card.
-    ═══════════════════════════════════════════════════════════════════════ */
+    ════════════════════════════════════════════════════════════════════════ */
     function resetForNextStudent() {
+        cancelAutoReset();
         scannedId.value = "";
         orderAmount.value = "";
-        document.getElementById("itemsNote").value = "";
+        itemsNote.value = "";
+        itemsCounter.textContent = "0 / 255";
+        itemsCounter.classList.remove("warn");
         document.getElementById("studentPin").value = "";
         document.getElementById("studentInfo").style.display = "none";
         alertBox.style.display = "none";
@@ -582,20 +864,43 @@
         scannedId.focus();
     }
 
+    function startAutoResetCountdown(seconds = 3) {
+        cancelAutoReset();
+        let remaining = seconds;
+        clearBtn.style.display = "block";
+        clearBtn.textContent = `✕ Next Student (auto-reset in ${remaining}s)`;
+        autoResetTimer = setInterval(() => {
+            remaining -= 1;
+            if (remaining <= 0) {
+                resetForNextStudent();
+            } else {
+                clearBtn.textContent = `✕ Next Student (auto-reset in ${remaining}s)`;
+            }
+        }, 1000);
+    }
+
     /* ═══════════════════════════════════════════════════════════════════════
        Balance check
-    ═══════════════════════════════════════════════════════════════════════ */
+    ════════════════════════════════════════════════════════════════════════ */
     async function checkBalanceOnly() {
+        cancelAutoReset();
         const balanceBtn = document.getElementById("balanceBtn");
         const payload = {
             student_reg_no: scannedId.value.trim(),
             pin: document.getElementById("studentPin").value.trim()
         };
         if (!payload.student_reg_no || !payload.pin) {
-            showAlert("err", "Scan the CanteenPay card, type the code, or pick a name, then enter the 4-digit PIN.");
+            const msg = "Scan the CanteenPay card, type the code, or pick a name, then enter the 4-digit PIN.";
+            showAlert("err", msg);
+            showToast(msg, "err", 3500);
+            return;
+        }
+        if (!navigator.onLine) {
+            showToast("⚠️ No internet connection.", "warn");
             return;
         }
         balanceBtn.disabled = true;
+        balanceBtn.innerHTML = `<span class="btn-spinner"></span>Checking…`;
         try {
             const res  = await fetch("/api/student/balance/", {
                 method: "POST",
@@ -604,41 +909,67 @@
             });
             const data = await res.json();
             if (res.ok) {
+                const bal = Number(data.wallet_balance).toLocaleString("en-UG");
+                const lim = Number(data.remaining_daily_limit).toLocaleString("en-UG");
                 showAlert("ok",
                     `${data.student_name}\n` +
-                    `Wallet Balance: UGX ${Number(data.wallet_balance).toLocaleString()}\n` +
-                    `Available to Spend Today: UGX ${Number(data.remaining_daily_limit).toLocaleString()}`
+                    `Wallet Balance: UGX ${bal}\n` +
+                    `Available to Spend Today: UGX ${lim}`
                 );
+                showToast(`Balance: UGX ${bal} (Today left: UGX ${lim})`, "ok", 4500);
                 document.getElementById("studentPin").value = "";
                 clearBtn.style.display = "block";
             } else {
-                showAlert("err", data.error || "Could not verify PIN.");
+                const errMsg = data.error || "Could not verify PIN.";
+                showAlert("err", errMsg);
+                showToast(errMsg, "err", 4000);
             }
         } catch {
             showAlert("err", "Network error while checking balance.");
+            showToast("Network error while checking balance.", "err");
         } finally {
             balanceBtn.disabled = false;
+            balanceBtn.textContent = "Check Balance Only (Requires PIN)";
         }
     }
 
     /* ═══════════════════════════════════════════════════════════════════════
        Checkout
-    ═══════════════════════════════════════════════════════════════════════ */
+    ════════════════════════════════════════════════════════════════════════ */
     async function processCheckout() {
+        cancelAutoReset();
         const chargeBtn = document.getElementById("chargeBtn");
-        const payload = {
-            student_reg_no:  scannedId.value.trim(),
-            amount:          orderAmount.value,
-            items_note:      document.getElementById("itemsNote").value.trim(),
-            pin:             document.getElementById("studentPin").value.trim(),
-            idempotency_key: pendingIdempotencyKey
-        };
-        if (!payload.student_reg_no || !payload.amount || !payload.pin) {
-            showAlert("err", "Enter student code, purchase amount, and 4-digit PIN.");
+        const regNo = scannedId.value.trim();
+        const amtNum = rawOrderAmount();
+        const pin = document.getElementById("studentPin").value.trim();
+
+        if (!regNo || isNaN(amtNum) || !pin) {
+            const msg = "Enter student code, purchase amount, and 4-digit PIN.";
+            showAlert("err", msg);
+            showToast(msg, "err", 3500);
             return;
         }
+        if (amtNum < 100) {
+            const msg = "Minimum purchase is UGX 100.";
+            showAlert("err", msg);
+            showToast(msg, "err", 3500);
+            return;
+        }
+        if (!navigator.onLine) {
+            showToast("⚠️ No internet connection — reconnect before charging.", "warn");
+            return;
+        }
+
+        const payload = {
+            student_reg_no:  regNo,
+            amount:          String(amtNum),
+            items_note:      itemsNote.value.trim(),
+            pin:             pin,
+            idempotency_key: pendingIdempotencyKey
+        };
+
         chargeBtn.disabled = true;
-        chargeBtn.innerText = "Processing…";
+        chargeBtn.innerHTML = `<span class="btn-spinner"></span>Processing…`;
         try {
             const res  = await fetch("/api/canteen/checkout/", {
                 method: "POST",
@@ -652,34 +983,42 @@
                 setTimeout(() => playBeep(1568, 0.1, 0.3), 110); // G6
                 vibrate([60, 40, 60]);
 
-                showAlert("ok", `✅ APPROVED!  New Balance: UGX ${Number(data.new_balance).toLocaleString()}`);
+                const newBal = Number(data.new_balance).toLocaleString("en-UG");
+                const okMsg = `✅ APPROVED!  New Balance: UGX ${newBal}`;
+                showAlert("ok", okMsg);
+                showToast(okMsg, "ok", 4000);
                 orderAmount.value = "";
-                document.getElementById("itemsNote").value = "";
+                itemsNote.value = "";
+                itemsCounter.textContent = "0 / 255";
+                itemsCounter.classList.remove("warn");
                 document.getElementById("studentPin").value = "";
                 resetCheckoutKey();
                 updateConfirmChargeBanner();
-                fetchStudentInfo();     // refresh student card to reflect new balance hint
-                clearBtn.style.display = "block";
+                fetchStudentInfo(true);     // refresh student card silently
+                startAutoResetCountdown(3);
             } else {
                 let errMsg = data.error || "Transaction Declined";
                 if (data.remaining_daily_limit !== undefined) {
-                    errMsg += `  Remaining today: UGX ${Number(data.remaining_daily_limit).toLocaleString()}.`;
+                    errMsg += `  Remaining today: UGX ${Number(data.remaining_daily_limit).toLocaleString("en-UG")}.`;
                 } else if (data.current_balance !== undefined) {
-                    errMsg += `  Current balance: UGX ${Number(data.current_balance).toLocaleString()}.`;
+                    errMsg += `  Current balance: UGX ${Number(data.current_balance).toLocaleString("en-UG")}.`;
                 }
                 showAlert("err", errMsg);
+                showToast(errMsg, "err", 5000);
             }
         } catch {
-            showAlert("err", "Network error. Please tap Charge again to retry safely.");
+            const errMsg = "Network error. Please tap Charge again to retry safely.";
+            showAlert("err", errMsg);
+            showToast(errMsg, "err", 5000);
         } finally {
             chargeBtn.disabled = false;
-            chargeBtn.innerText = "Charge Student Wallet";
+            chargeBtn.textContent = "Charge Student Wallet";
         }
     }
 
     /* ═══════════════════════════════════════════════════════════════════════
        Alert helper
-    ═══════════════════════════════════════════════════════════════════════ */
+    ════════════════════════════════════════════════════════════════════════ */
     function showAlert(type, msg) {
         alertBox.style.display = "block";
         alertBox.className = `alert ${type}`;
@@ -688,7 +1027,7 @@
 
     /* ═══════════════════════════════════════════════════════════════════════
        PWA Registration & Install Prompt
-    ═══════════════════════════════════════════════════════════════════════ */
+    ════════════════════════════════════════════════════════════════════════ */
     let deferredInstallPrompt = null;
     const installPwaBtn = document.getElementById("installPwaBtn");
 
@@ -703,6 +1042,7 @@
     window.addEventListener("appinstalled", () => {
         deferredInstallPrompt = null;
         installPwaBtn.style.display = "none";
+        showToast("📲 CanteenPay POS installed!", "ok", 4000);
     });
 
     async function installPosApp() {

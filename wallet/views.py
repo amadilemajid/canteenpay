@@ -3,6 +3,7 @@ import hmac
 import io
 import json
 import logging
+import re
 import uuid
 from datetime import datetime, timedelta
 from decimal import Decimal, InvalidOperation
@@ -66,6 +67,37 @@ def normalize_ug_phone(phone: str) -> str:
     if cleaned.startswith("0") and len(cleaned) == 10:
         return "256" + cleaned[1:]
     return cleaned
+
+
+# Valid Uganda MNO prefixes (after leading 0 → 256):  MTN 077/078/076/039, Airtel 070/074/075
+_UG_VALID_PREFIX_RE = re.compile(r"^256(70|74|75|76|77|78|39)\d{7}$")
+
+
+def _validate_ug_phone(raw_phone: str) -> tuple:
+    """
+    Returns (normalized_number, None) on success or (None, error_message) on failure.
+    Accepts: 07XXXXXXXX (10 digits), 256XXXXXXXXX (12 digits), +256XXXXXXXXX (13 chars).
+    """
+    cleaned = raw_phone.strip().replace("+", "").replace(" ", "").replace("-", "")
+
+    if cleaned.startswith("0"):
+        if len(cleaned) < 10:
+            return None, "Phone number is too short — Uganda numbers have 10 digits (e.g. 0772123456)."
+        if len(cleaned) > 10:
+            return None, "Phone number is too long — Uganda numbers have 10 digits (e.g. 0772123456)."
+        normalized = "256" + cleaned[1:]
+    elif cleaned.startswith("256"):
+        if len(cleaned) != 12:
+            return None, "Invalid Uganda international format — expected 256XXXXXXXXX (12 digits)."
+        normalized = cleaned
+    else:
+        return None, "Enter a Uganda phone number starting with 07… or 256… (e.g. 0772123456)."
+
+    if not _UG_VALID_PREFIX_RE.match(normalized):
+        return None, (
+            "Unrecognised network — enter an MTN (077/078/076) or Airtel (070/074/075) Uganda number."
+        )
+    return normalized, None
 
 
 def _parse_json_body(request):
@@ -348,7 +380,9 @@ def initiate_parent_topup(request):
                 status=400,
             )
 
-        payer_phone = normalize_ug_phone(raw_phone)
+        payer_phone, phone_error = _validate_ug_phone(raw_phone)
+        if phone_error:
+            return JsonResponse({"error": phone_error}, status=400)
         platform_fee = Decimal("500.00")
         momo_ref_id = uuid.uuid4()
 

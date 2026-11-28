@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-theme="light">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -9,76 +9,494 @@
     <link rel="icon" href="data:,">
     <title>CanteenPay | Parent Pocket Money Top-Up</title>
     <style>
-        body { font-family: system-ui, sans-serif; background: #f4f6f8; margin: 0; padding: 20px; }
-        .card { max-width: 420px; margin: 0 auto; background: #fff; padding: 24px; border-radius: 12px; box-shadow: 0 4px 12px rgba(0,0,0,0.08); }
-        h2 { margin-top: 0; color: #111827; font-size: 1.4rem; }
-        label { display: block; font-weight: 600; margin: 14px 0 6px; color: #374151; font-size: 0.9rem; }
-        input { width: 100%; padding: 12px; border: 1px solid #d1d5db; border-radius: 8px; font-size: 1rem; box-sizing: border-box; }
-        button { width: 100%; padding: 14px; background: #ffcc00; color: #000; font-weight: 700; border: none; border-radius: 8px; font-size: 1rem; margin-top: 18px; cursor: pointer; }
+        /* ── CSS variables for dark/light theme ── */
+        :root {
+            --bg:        #f4f6f8;
+            --card:      #ffffff;
+            --text:      #111827;
+            --label:     #374151;
+            --muted:     #6b7280;
+            --border:    #d1d5db;
+            --input-bg:  #ffffff;
+            --input-txt: #111827;
+            --badge-bg:  #ecfdf5;
+            --badge-brd: #10b981;
+            --badge-txt: #065f46;
+            --breakdown-bg:  #f0fdf4;
+            --breakdown-brd: #6ee7b7;
+            --breakdown-txt: #065f46;
+            --footer-brd:#e5e7eb;
+            --footer-txt:#4b5563;
+        }
+        [data-theme="dark"] {
+            --bg:        #111827;
+            --card:      #1f2937;
+            --text:      #f9fafb;
+            --label:     #d1d5db;
+            --muted:     #9ca3af;
+            --border:    #374151;
+            --input-bg:  #374151;
+            --input-txt: #f9fafb;
+            --badge-bg:  #064e3b;
+            --badge-brd: #10b981;
+            --badge-txt: #a7f3d0;
+            --breakdown-bg:  #052e16;
+            --breakdown-brd: #059669;
+            --breakdown-txt: #6ee7b7;
+            --footer-brd:#374151;
+            --footer-txt:#9ca3af;
+        }
+
+        *, *::before, *::after { box-sizing: border-box; }
+        body {
+            font-family: system-ui, sans-serif;
+            background: var(--bg); color: var(--text);
+            margin: 0; padding: 20px;
+            transition: background 0.25s, color 0.25s;
+        }
+
+        /* ── Top bar ── */
+        .top-bar {
+            max-width: 420px; margin: 0 auto 12px;
+            display: flex; justify-content: flex-end; align-items: center; gap: 8px;
+        }
+        #themeToggle {
+            width: auto; padding: 7px 12px; margin: 0;
+            background: var(--card); color: var(--text);
+            border: 1px solid var(--border); border-radius: 8px;
+            font-size: 1rem; cursor: pointer; transition: background 0.2s;
+        }
+        #themeToggle:hover { background: var(--border); }
+
+        /* ── Card ── */
+        .card {
+            max-width: 420px; margin: 0 auto;
+            background: var(--card); padding: 24px;
+            border-radius: 12px; box-shadow: 0 4px 12px rgba(0,0,0,0.08);
+        }
+        h2 { margin-top: 0; color: var(--text); font-size: 1.4rem; }
+
+        /* ── Form controls ── */
+        label {
+            display: block; font-weight: 600; margin: 14px 0 6px;
+            color: var(--label); font-size: 0.9rem;
+        }
+        .input-hint { font-size: 0.78rem; color: var(--muted); margin-top: 3px; }
+        input {
+            width: 100%; padding: 12px;
+            border: 1px solid var(--border); border-radius: 8px;
+            font-size: 1rem; box-sizing: border-box;
+            background: var(--input-bg); color: var(--input-txt);
+            transition: border-color 0.2s;
+        }
+        input:focus { outline: 2px solid #10b981; border-color: #10b981; }
+        input.field-err { border-color: #ef4444 !important; }
+        input.field-ok  { border-color: #10b981 !important; }
+
+        /* ── Field error label ── */
+        .field-error { display: none; font-size: 0.78rem; color: #dc2626; margin-top: 4px; font-weight: 600; }
+        .field-error.show { display: block; }
+
+        /* ── Buttons ── */
+        button {
+            width: 100%; padding: 14px; background: #ffcc00;
+            color: #000; font-weight: 700; border: none;
+            border-radius: 8px; font-size: 1rem; margin-top: 18px; cursor: pointer;
+            transition: background 0.2s, opacity 0.2s;
+            position: relative; overflow: hidden;
+        }
         button:disabled { opacity: 0.6; cursor: not-allowed; }
-        .student-badge { background: #ecfdf5; border: 1px solid #10b981; color: #065f46; padding: 10px; border-radius: 8px; margin-top: 10px; font-size: 0.9rem; display: none; }
+        .verify-btn {
+            width: auto; margin-top: 0; padding: 11px 16px;
+            background: #111827; color: #ffffff;
+            border: none; border-radius: 6px; font-weight: 700;
+            font-size: 0.92rem; cursor: pointer;
+        }
+        [data-theme="dark"] .verify-btn { background: #374151; }
+        .auth-link {
+            display: inline-block; padding: 11px 16px;
+            background: #059669; color: #ffffff !important;
+            border-radius: 6px; text-decoration: none;
+            font-weight: 700; margin-right: 8px; margin-bottom: 8px;
+            border: none; cursor: pointer;
+        }
+
+        /* ── Loading spinner inside button ── */
+        .btn-spinner {
+            display: inline-block; width: 16px; height: 16px;
+            border: 2px solid rgba(0,0,0,0.3); border-top-color: #000;
+            border-radius: 50%; animation: spin 0.7s linear infinite;
+            vertical-align: middle; margin-right: 8px;
+        }
+        @keyframes spin { to { transform: rotate(360deg); } }
+
+        /* ── Student badge ── */
+        .student-badge {
+            background: var(--badge-bg); border: 1px solid var(--badge-brd);
+            color: var(--badge-txt); padding: 10px; border-radius: 8px;
+            margin-top: 10px; font-size: 0.9rem; display: none;
+        }
+
+        /* ── Status / alert box ── */
         .status-box { margin-top: 16px; padding: 12px; border-radius: 8px; font-size: 0.92rem; display: none; }
-        .error { background: #fef2f2; color: #991b1b; border: 1px solid #f87171; }
-        .success { background: #eff6ff; color: #1e40af; border: 1px solid #60a5fa; }
-        .alert { margin-top: 16px; padding: 12px; border-radius: 8px; font-size: 0.92rem; display: none; }
+        .alert      { margin-top: 16px; padding: 12px; border-radius: 8px; font-size: 0.92rem; display: none; }
         .alert.info { background: #eff6ff; color: #1e40af; border: 1px solid #60a5fa; }
-        .alert.ok { background: #d1fae5; color: #065f46; border: 1px solid #10b981; }
-        .alert.err { background: #fef2f2; color: #991b1b; border: 1px solid #f87171; }
-        .auth-link { display: inline-block; padding: 11px 16px; background: #059669; color: #ffffff !important; border-radius: 6px; text-decoration: none; font-weight: 700; margin-right: 8px; margin-bottom: 8px; }
-        .verify-btn { width: auto; margin-top: 0; padding: 11px 16px; background: #111827; color: #ffffff; border: none; border-radius: 6px; font-weight: 700; font-size: 0.92rem; cursor: pointer; }
+        .alert.ok   { background: #d1fae5; color: #065f46; border: 1px solid #10b981; }
+        .alert.err  { background: #fef2f2; color: #991b1b; border: 1px solid #f87171; }
+        [data-theme="dark"] .alert.info { background: #1e3a5f; color: #93c5fd; border-color: #1d4ed8; }
+        [data-theme="dark"] .alert.ok   { background: #064e3b; color: #a7f3d0; border-color: #059669; }
+        [data-theme="dark"] .alert.err  { background: #450a0a; color: #fca5a5; border-color: #991b1b; }
+
+        /* ── Cost breakdown ── */
+        #costBreakdown {
+            display: none; margin-top: 10px; padding: 10px 12px;
+            background: var(--breakdown-bg); border: 1px solid var(--breakdown-brd);
+            border-radius: 8px; font-size: 0.88rem;
+            color: var(--breakdown-txt); line-height: 1.6;
+        }
+
+        /* ── Toast container ── */
+        #toastContainer {
+            position: fixed; top: 16px; right: 16px; z-index: 9999;
+            display: flex; flex-direction: column; gap: 8px;
+            pointer-events: none;
+        }
+        .toast {
+            padding: 12px 16px; border-radius: 8px;
+            font-size: 0.88rem; font-weight: 600; max-width: 320px;
+            box-shadow: 0 4px 16px rgba(0,0,0,0.18);
+            opacity: 0; transition: opacity 0.3s, transform 0.3s;
+            transform: translateX(40px); pointer-events: auto;
+        }
+        .toast.show { opacity: 1; transform: translateX(0); }
+        .toast-ok   { background: #d1fae5; color: #065f46; border-left: 4px solid #059669; }
+        .toast-err  { background: #fef2f2; color: #991b1b; border-left: 4px solid #ef4444; }
+        .toast-info { background: #eff6ff; color: #1e40af; border-left: 4px solid #3b82f6; }
+        .toast-warn { background: #fef3c7; color: #92400e; border-left: 4px solid #f59e0b; }
+        [data-theme="dark"] .toast-ok   { background: #064e3b; color: #a7f3d0; }
+        [data-theme="dark"] .toast-err  { background: #450a0a; color: #fca5a5; }
+        [data-theme="dark"] .toast-info { background: #1e3a5f; color: #93c5fd; }
+        [data-theme="dark"] .toast-warn { background: #451a03; color: #fde68a; }
+
+        /* ── Offline banner ── */
+        #offlineBanner {
+            display: none; padding: 8px 12px; background: #fef3c7;
+            color: #92400e; border-radius: 6px; font-size: 0.82rem;
+            font-weight: 600; margin-bottom: 12px; text-align: center;
+        }
+        [data-theme="dark"] #offlineBanner { background: #451a03; color: #fde68a; }
     </style>
 </head>
 <body>
+
+<!-- Toast container -->
+<div id="toastContainer"></div>
+
+<!-- Theme toggle -->
+<div class="top-bar">
+    <button id="themeToggle" type="button" onclick="toggleTheme()" title="Toggle dark / light mode">🌙 Dark mode</button>
+</div>
+
 <div class="card">
     {% csrf_token %}
+    <div id="offlineBanner">⚠️ No internet connection — payment will fail until reconnected.</div>
+
     <h2>Send Student Pocket Money</h2>
-    <p style="color:#6b7280; font-size:0.9rem;">Top up your child's school canteen wallet instantly via MTN MoMo or Airtel Money.</p>
+    <p style="color:var(--muted); font-size:0.9rem;">
+        Top up your child's school canteen wallet instantly via MTN MoMo or Airtel Money.
+    </p>
 
+    <!-- CanteenPay code -->
     <label for="regNo">CanteenPay code</label>
-    <input type="text" id="regNo" placeholder="e.g. ARI-0001 (from your child's card or SMS)" onblur="verifyStudent()">
-    <div id="studentBadge" class="student-badge"></div>
+    <input type="text" id="regNo" placeholder="e.g. ARI-0001 (from your child's card or SMS)"
+           onblur="verifyStudent()" autocomplete="off">
+    <div class="field-error" id="regNoErr"></div>
+    <div class="input-hint">Format: ARI-0001 (letters, dash, 4 digits)</div>
+    <div id="studentBadge" class="student-badge" role="status" aria-live="polite"></div>
 
+    <!-- Amount -->
     <label for="amount">Pocket Money Amount (UGX)</label>
-    <input type="number" id="amount" placeholder="e.g. 20000" min="1000" step="500">
+    <input type="text" id="amount" inputmode="numeric" pattern="[0-9,]*"
+           placeholder="e.g. 20,000" autocomplete="off" oninput="onAmountInput()">
+    <div class="field-error" id="amountErr"></div>
+    <div class="input-hint">Minimum UGX 1,000 · Maximum UGX 10,000,000</div>
 
+    <!-- Cost breakdown -->
+    <div id="costBreakdown"></div>
+
+    <!-- Phone -->
     <label for="phone">Your Mobile Money Number (MTN or Airtel)</label>
-    <input type="tel" id="phone" placeholder="e.g. 0772123456 or 0752123456" oninput="updateNetworkStyle()">
+    <input type="tel" id="phone" placeholder="e.g. 0772123456 or 0752123456"
+           oninput="onPhoneInput()" autocomplete="tel">
+    <div class="field-error" id="phoneErr"></div>
+    <div class="input-hint">Uganda 10-digit (07XXXXXXXX) or international (256XXXXXXXXX)</div>
 
-    <!-- Live cost breakdown — shown when amount is valid -->
-    <div id="costBreakdown" style="
-        display:none;
-        margin-top:10px;
-        padding:10px 12px;
-        background:#f0fdf4;
-        border:1px solid #6ee7b7;
-        border-radius:8px;
-        font-size:0.88rem;
-        color:#065f46;
-        line-height:1.6;
-    "></div>
-
+    <!-- Pay button -->
     <button id="payBtn" type="button" onclick="submitTopUp()">Send via Mobile Money (+UGX 500 Fee)</button>
 
     <!-- Trust badge -->
-    <p style="margin:10px 0 0; text-align:center; font-size:0.82rem; color:#6b7280;">
+    <p style="margin:10px 0 0; text-align:center; font-size:0.82rem; color:var(--muted);">
         🔒 100% of student pocket money settles directly into the school's official bank account.
     </p>
-    <div id="statusBox" class="status-box"></div>
+
+    <!-- Status / progress area -->
+    <div id="statusBox" class="alert" role="status" aria-live="polite"></div>
 </div>
 
-<footer class="compliance-footer" style="margin-top:24px; padding:16px; border-top:1px solid #e5e7eb; font-size:0.82rem; color:#4b5563;">
-    <p style="margin:0 0 8px 0; font-weight:600; color:#111827;">CanteenPay Uganda</p>
+<footer style="max-width:420px; margin:24px auto 0; padding:16px; border-top:1px solid var(--footer-brd); font-size:0.82rem; color:var(--footer-txt);">
+    <p style="margin:0 0 8px 0; font-weight:600; color:var(--text);">CanteenPay Uganda</p>
     <p style="margin:0 0 8px 0;">CanteenPay Uganda is a cashless school canteen wallet and pocket-money management platform. Top-ups settle directly into participating school bank accounts.</p>
     <p style="margin:0 0 8px 0;"><strong>Email:</strong> amadilemajid10@gmail.com &nbsp;|&nbsp; <strong>Phone:</strong> +256 774 735 228 &nbsp;|&nbsp; <strong>Location:</strong> Kampala &amp; Yumbe District, Uganda</p>
     <p style="margin:0;"><a href="/policies/" style="color:#059669; text-decoration:none; font-weight:600;">View Terms &amp; Policies &rarr;</a></p>
 </footer>
 
 <script>
-let currentFlwAuthUrl = null;
-let currentReferenceId = null;
-let verifyPollTimer = null;
-let verifyPollCount = 0;
-const MAX_VERIFY_POLLS = 45;
+/* ═══════════════════════════════════════════════════════════════════════
+   THEME — dark / light with localStorage persistence
+════════════════════════════════════════════════════════════════════════ */
+const THEME_KEY = "canteenpay_theme";
+
+function applyTheme(dark) {
+    document.documentElement.setAttribute("data-theme", dark ? "dark" : "light");
+    const btn = document.getElementById("themeToggle");
+    if (btn) btn.textContent = dark ? "☀️ Light mode" : "🌙 Dark mode";
+    try { localStorage.setItem(THEME_KEY, dark ? "dark" : "light"); } catch (_) {}
+}
+
+function toggleTheme() {
+    const isDark = document.documentElement.getAttribute("data-theme") === "dark";
+    applyTheme(!isDark);
+}
+
+(function initTheme() {
+    let saved = null;
+    try { saved = localStorage.getItem(THEME_KEY); } catch (_) {}
+    const prefersDark = saved ? saved === "dark" : window.matchMedia("(prefers-color-scheme: dark)").matches;
+    applyTheme(prefersDark);
+})();
+
+/* ═══════════════════════════════════════════════════════════════════════
+   TOAST SYSTEM
+════════════════════════════════════════════════════════════════════════ */
+function showToast(message, type = "info", durationMs = 4500) {
+    const container = document.getElementById("toastContainer");
+    const toast = document.createElement("div");
+    toast.className = `toast toast-${type}`;
+    toast.textContent = message;
+    container.appendChild(toast);
+    requestAnimationFrame(() => {
+        requestAnimationFrame(() => toast.classList.add("show"));
+    });
+    setTimeout(() => {
+        toast.classList.remove("show");
+        setTimeout(() => toast.remove(), 350);
+    }, durationMs);
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+   OFFLINE DETECTION
+════════════════════════════════════════════════════════════════════════ */
+function updateOfflineBanner() {
+    const banner = document.getElementById("offlineBanner");
+    banner.style.display = navigator.onLine ? "none" : "block";
+}
+window.addEventListener("online",  () => { updateOfflineBanner(); showToast("Back online ✓", "ok", 3000); });
+window.addEventListener("offline", () => { updateOfflineBanner(); showToast("⚠️ No internet — payment will fail.", "warn", 7000); });
+updateOfflineBanner();
+
+/* ═══════════════════════════════════════════════════════════════════════
+   CSRF
+════════════════════════════════════════════════════════════════════════ */
+function getCookie(name) {
+    let cookieValue = null;
+    if (document.cookie && document.cookie !== "") {
+        for (const cookie of document.cookie.split(";")) {
+            const c = cookie.trim();
+            if (c.startsWith(name + "=")) {
+                cookieValue = decodeURIComponent(c.slice(name.length + 1));
+                break;
+            }
+        }
+    }
+    if (!cookieValue && name === "csrftoken") {
+        const el = document.querySelector("[name=csrfmiddlewaretoken]");
+        if (el) cookieValue = el.value;
+    }
+    return cookieValue || "";
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+   PHONE VALIDATION (mirrors backend _validate_ug_phone)
+════════════════════════════════════════════════════════════════════════ */
+const UG_NET_RE = /^256(70|74|75|76|77|78|39)\d{7}$/;
+
+function validateUgPhone(raw) {
+    const c = raw.replace(/[\s+\-]/g, "");
+    if (c.startsWith("0")) {
+        if (c.length < 10) return "Phone number is too short — Uganda numbers have 10 digits (e.g. 0772123456).";
+        if (c.length > 10) return "Phone number is too long — Uganda numbers have 10 digits (e.g. 0772123456).";
+        const norm = "256" + c.slice(1);
+        if (!UG_NET_RE.test(norm)) return "Unrecognised network — enter MTN (077/078/076) or Airtel (070/074/075).";
+    } else if (c.startsWith("256")) {
+        if (c.length !== 12) return "Invalid Uganda international format — expected 256XXXXXXXXX (12 digits).";
+        if (!UG_NET_RE.test(c)) return "Unrecognised network — enter MTN (077/078/076) or Airtel (070/074/075).";
+    } else {
+        return "Enter a Uganda phone number starting with 07… or 256…";
+    }
+    return null;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+   AMOUNT FORMATTING
+════════════════════════════════════════════════════════════════════════ */
+function rawAmount() {
+    const digits = document.getElementById("amount").value.replace(/\D/g, "");
+    return digits ? parseInt(digits, 10) : NaN;
+}
+
+function onAmountInput() {
+    const input = document.getElementById("amount");
+    const digits = input.value.replace(/\D/g, "");
+    const num = digits ? parseInt(digits, 10) : NaN;
+    if (!isNaN(num) && num > 0) {
+        const selStart = input.selectionStart || 0;
+        const beforeLen = input.value.length;
+        input.value = num.toLocaleString("en-UG");
+        const afterLen = input.value.length;
+        const nextPos = Math.max(0, selStart + (afterLen - beforeLen));
+        try { input.setSelectionRange(nextPos, nextPos); } catch (_) {}
+    } else {
+        input.value = "";
+    }
+    validateAmountField();
+    updateCostBreakdown();
+    updateNetworkStyle();
+}
+
+function validateAmountField() {
+    const errEl = document.getElementById("amountErr");
+    const input  = document.getElementById("amount");
+    const amt    = rawAmount();
+    if (isNaN(amt) || amt <= 0) {
+        errEl.textContent = ""; errEl.classList.remove("show");
+        input.classList.remove("field-err", "field-ok"); return false;
+    }
+    if (amt < 1000) {
+        errEl.textContent = "Minimum top-up is UGX 1,000.";
+        errEl.classList.add("show"); input.classList.add("field-err"); input.classList.remove("field-ok"); return false;
+    }
+    if (amt > 10000000) {
+        errEl.textContent = "Maximum single top-up is UGX 10,000,000.";
+        errEl.classList.add("show"); input.classList.add("field-err"); input.classList.remove("field-ok"); return false;
+    }
+    errEl.textContent = ""; errEl.classList.remove("show");
+    input.classList.remove("field-err"); input.classList.add("field-ok"); return true;
+}
+
+function onPhoneInput() {
+    updateNetworkStyle();
+    const raw = document.getElementById("phone").value.trim();
+    const errEl = document.getElementById("phoneErr");
+    const input  = document.getElementById("phone");
+    if (!raw) {
+        errEl.textContent = ""; errEl.classList.remove("show");
+        input.classList.remove("field-err", "field-ok"); return;
+    }
+    const err = validateUgPhone(raw);
+    if (err) {
+        errEl.textContent = err; errEl.classList.add("show");
+        input.classList.add("field-err"); input.classList.remove("field-ok");
+    } else {
+        errEl.textContent = ""; errEl.classList.remove("show");
+        input.classList.remove("field-err"); input.classList.add("field-ok");
+    }
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+   NETWORK STYLE (button color based on detected network)
+════════════════════════════════════════════════════════════════════════ */
+function updateNetworkStyle() {
+    const phone = document.getElementById("phone").value.replace(/[\s+\-]/g, "");
+    const btn   = document.getElementById("payBtn");
+    const amt   = rawAmount();
+    const feeText = isNaN(amt) || amt <= 0 ? "" : ` (+UGX 500 Fee)`;
+    if (/^(0|256)?(70|75|74)/.test(phone)) {
+        btn.style.background = "#e11d48"; btn.style.color = "#ffffff";
+        btn.textContent = `Send via Airtel Money${feeText}`;
+    } else if (/^(0|256)?(77|78|76|39)/.test(phone)) {
+        btn.style.background = "#f59e0b"; btn.style.color = "#111827";
+        btn.textContent = `Send via MTN MoMo${feeText}`;
+    } else {
+        btn.style.background = "#059669"; btn.style.color = "#ffffff";
+        btn.textContent = `Send via Mobile Money${feeText || " (+UGX 500 Fee)"}`;
+    }
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+   COST BREAKDOWN
+════════════════════════════════════════════════════════════════════════ */
+function updateCostBreakdown() {
+    const breakdown = document.getElementById("costBreakdown");
+    const amt = rawAmount();
+    if (isNaN(amt) || amt <= 0) { breakdown.style.display = "none"; return; }
+    const fee   = 500;
+    const total = amt + fee;
+    breakdown.innerHTML =
+        `<strong>Cost Summary:</strong><br>` +
+        `Student Wallet: <strong>UGX ${amt.toLocaleString("en-UG")}</strong>` +
+        ` + Convenience Fee: <strong>UGX ${fee.toLocaleString("en-UG")}</strong>` +
+        ` = Total Deducted: <strong>UGX ${total.toLocaleString("en-UG")}</strong>`;
+    breakdown.style.display = "block";
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+   STUDENT VERIFY
+════════════════════════════════════════════════════════════════════════ */
+async function verifyStudent() {
+    const regNo  = document.getElementById("regNo").value.trim();
+    const badge  = document.getElementById("studentBadge");
+    const errEl  = document.getElementById("regNoErr");
+    const input  = document.getElementById("regNo");
+
+    if (!regNo) { badge.style.display = "none"; return; }
+
+    // Client-side code format hint
+    if (!/^[A-Za-z]+-\d+$/.test(regNo)) {
+        errEl.textContent = "CanteenPay codes look like ARI-0001 (letters, dash, digits).";
+        errEl.classList.add("show"); input.classList.add("field-err"); badge.style.display = "none"; return;
+    }
+    errEl.textContent = ""; errEl.classList.remove("show"); input.classList.remove("field-err");
+
+    try {
+        const res  = await fetch(`/api/student/lookup/?reg_no=${encodeURIComponent(regNo)}&_t=${Date.now()}`);
+        const data = await res.json();
+        badge.style.display = "block";
+        if (res.ok) {
+            const cls = data.class_stream ? ` (${data.class_stream})` : "";
+            badge.style.background = "var(--badge-bg)"; badge.style.color = "var(--badge-txt)";
+            badge.style.border = "1px solid var(--badge-brd)";
+            badge.innerText = `✓ ${data.full_name}${cls} — ${data.school}`;
+            input.classList.add("field-ok");
+            showToast(`✓ Student found: ${data.full_name}`, "ok", 3000);
+        } else {
+            badge.style.background = "#fef2f2"; badge.style.color = "#991b1b";
+            badge.style.border = "1px solid #f87171";
+            badge.innerText = `✗ ${data.error || "Student ID not found"}`;
+            input.classList.add("field-err");
+        }
+    } catch (_) {
+        badge.style.display = "none";
+    }
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+   POLLING
+════════════════════════════════════════════════════════════════════════ */
+let currentFlwAuthUrl   = null;
+let currentReferenceId  = null;
+let verifyPollTimer     = null;
+let verifyPollCount     = 0;
+const MAX_VERIFY_POLLS  = 45;
 
 function startVerifyPolling(refId) {
     if (verifyPollTimer) clearInterval(verifyPollTimer);
@@ -86,193 +504,123 @@ function startVerifyPolling(refId) {
     verifyPollTimer = setInterval(() => {
         if (!currentReferenceId) return;
         verifyPollCount += 1;
-        if (verifyPollCount > MAX_VERIFY_POLLS) {
-            clearInterval(verifyPollTimer);
-            verifyPollTimer = null;
-            return;
-        }
+        if (verifyPollCount > MAX_VERIFY_POLLS) { clearInterval(verifyPollTimer); verifyPollTimer = null; return; }
         verifyTopUp(refId, true);
     }, 4000);
 }
 
-function getCookie(name) {
-    let cookieValue = null;
-    if (document.cookie && document.cookie !== "") {
-        const cookies = document.cookie.split(";");
-        for (let i = 0; i < cookies.length; i++) {
-            const cookie = cookies[i].trim();
-            if (cookie.substring(0, name.length + 1) === `${name}=`) {
-                cookieValue = decodeURIComponent(cookie.substring(name.length + 1));
-                break;
-            }
-        }
-    }
-    if (!cookieValue && name === "csrftoken") {
-        const tokenInput = document.querySelector("[name=csrfmiddlewaretoken]");
-        if (tokenInput) cookieValue = tokenInput.value;
-    }
-    return cookieValue || "";
-}
-
-async function verifyStudent() {
-    const regNo = document.getElementById("regNo").value.trim();
-    const badge = document.getElementById("studentBadge");
-    if (!regNo) {
-        badge.style.display = "none";
-        return;
-    }
-    try {
-        const res = await fetch(`/api/student/lookup/?reg_no=${encodeURIComponent(regNo)}&_t=${Date.now()}`);
-        const data = await res.json();
-        badge.style.display = "block";
-        if (res.ok) {
-            const cls = data.class_stream ? ` (${data.class_stream})` : "";
-            badge.style.background = "#ecfdf5";
-            badge.style.color = "#065f46";
-            badge.innerText = `✓ ${data.full_name}${cls} — ${data.school}`;
-        } else {
-            badge.style.background = "#fef2f2";
-            badge.style.color = "#991b1b";
-            badge.innerText = `✗ ${data.error || "Student ID not found"}`;
-        }
-    } catch (err) {
-        badge.style.display = "none";
-    }
-}
-
-function updateNetworkStyle() {
-    const phone = document.getElementById("phone").value.replace(/\s+/g, "");
-    const btn = document.getElementById("payBtn");
-    if (/^(0|256|\+256)?(70|75|74)/.test(phone)) {
-        btn.style.background = "#e11d48";
-        btn.style.color = "#ffffff";
-        btn.innerText = "Send via Airtel Money (+UGX 500 Fee)";
-    } else if (/^(0|256|\+256)?(77|78|76|39)/.test(phone)) {
-        btn.style.background = "#f59e0b";
-        btn.style.color = "#111827";
-        btn.innerText = "Send via MTN MoMo (+UGX 500 Fee)";
-    } else {
-        btn.style.background = "#059669";
-        btn.style.color = "#ffffff";
-        btn.innerText = "Send via Mobile Money (+UGX 500 Fee)";
-    }
-}
-
-function updateCostBreakdown() {
-    const rawAmount = document.getElementById("amount").value.trim();
-    const breakdown = document.getElementById("costBreakdown");
-    const amt = parseFloat(rawAmount);
-    if (!rawAmount || isNaN(amt) || amt <= 0) {
-        breakdown.style.display = "none";
-        return;
-    }
-    const fee   = 500;
-    const total = amt + fee;
-    breakdown.innerHTML =
-        `<strong>Cost Summary:</strong><br>` +
-        `Student Wallet: <strong>UGX ${amt.toLocaleString()}</strong>` +
-        ` + Convenience Fee: <strong>UGX ${fee.toLocaleString()}</strong>` +
-        ` = Total Deducted: <strong>UGX ${total.toLocaleString()}</strong>`;
-    breakdown.style.display = "block";
-}
-document.getElementById("amount").addEventListener("input", updateCostBreakdown);
-
+/* ═══════════════════════════════════════════════════════════════════════
+   SUBMIT TOP-UP
+════════════════════════════════════════════════════════════════════════ */
 async function submitTopUp() {
-    const regNo = document.getElementById("regNo").value.trim();
-    const amount = document.getElementById("amount").value.trim();
-    const phone = document.getElementById("phone").value.trim();
+    const regNo    = document.getElementById("regNo").value.trim();
+    const amountRaw = rawAmount();
+    const phone    = document.getElementById("phone").value.trim();
     const alertBox = document.getElementById("statusBox");
-    const btn = document.getElementById("payBtn");
+    const btn      = document.getElementById("payBtn");
 
-    if (!regNo || !amount || !phone) {
-        alertBox.style.display = "block";
-        alertBox.className = "alert err";
-        alertBox.innerText = "Please fill in all fields.";
-        return;
+    // ── Client-side validation ────────────────────────────────────────
+    if (!regNo) {
+        showToast("Please enter the student's CanteenPay code.", "err"); return;
+    }
+    if (!/^[A-Za-z]+-\d+$/.test(regNo)) {
+        showToast("CanteenPay codes look like ARI-0001.", "err"); return;
+    }
+    if (isNaN(amountRaw) || amountRaw <= 0) {
+        showToast("Please enter a pocket money amount.", "err"); return;
+    }
+    if (amountRaw < 1000) {
+        showToast("Minimum top-up is UGX 1,000.", "err"); return;
+    }
+    if (amountRaw > 10000000) {
+        showToast("Maximum single top-up is UGX 10,000,000.", "err"); return;
+    }
+    if (!phone) {
+        showToast("Please enter your Mobile Money number.", "err"); return;
+    }
+    const phoneErr = validateUgPhone(phone);
+    if (phoneErr) {
+        showToast(phoneErr, "err"); return;
+    }
+    if (!navigator.onLine) {
+        showToast("⚠️ No internet connection — please reconnect and try again.", "warn"); return;
     }
 
+    // ── Submit ────────────────────────────────────────────────────────
     if (verifyPollTimer) clearInterval(verifyPollTimer);
     btn.disabled = true;
-    btn.innerText = "Sending prompt...";
+    btn.innerHTML = `<span class="btn-spinner"></span>Sending MoMo prompt…`;
     alertBox.style.display = "none";
 
     try {
-        const res = await fetch("/api/parent/topup/", {
+        const res  = await fetch("/api/parent/topup/", {
             method: "POST",
-            headers: {
-                "Content-Type": "application/json",
-                "X-CSRFToken": getCookie("csrftoken")
-            },
-            body: JSON.stringify({
-                student_reg_no: regNo,
-                amount: amount,
-                payer_phone: phone
-            })
+            headers: { "Content-Type": "application/json", "X-CSRFToken": getCookie("csrftoken") },
+            body: JSON.stringify({ student_reg_no: regNo, amount: String(amountRaw), payer_phone: phone })
         });
         const data = await res.json();
         alertBox.style.display = "block";
 
         if (res.ok) {
-            currentFlwAuthUrl = data.redirect_url || null;
-            currentReferenceId = data.reference_id || null;
+            currentFlwAuthUrl  = data.redirect_url  || null;
+            currentReferenceId = data.reference_id  || null;
             if (currentReferenceId) {
                 try { sessionStorage.setItem("canteenpay_pending_ref", currentReferenceId); } catch (_) {}
             }
             alertBox.className = "alert info";
             alertBox.innerHTML = "";
 
-            const msgSpan = document.createElement("div");
-            msgSpan.style.marginBottom = "12px";
-            msgSpan.innerText = data.message;
-            alertBox.appendChild(msgSpan);
+            const msgDiv = document.createElement("div");
+            msgDiv.style.marginBottom = "12px";
+            msgDiv.textContent = data.message;
+            alertBox.appendChild(msgDiv);
 
             if (data.redirect_url) {
                 const authBtn = document.createElement("button");
-                authBtn.type = "button";
-                authBtn.className = "auth-link";
-                authBtn.innerText = "1. Authorize OTP →";
+                authBtn.type = "button"; authBtn.className = "auth-link";
+                authBtn.textContent = "1. Authorize OTP →";
                 authBtn.onclick = openFlwAuth;
                 alertBox.appendChild(authBtn);
             }
 
             const verifyBtn = document.createElement("button");
-            verifyBtn.type = "button";
-            verifyBtn.className = "verify-btn";
-            verifyBtn.innerText = "2. Verify & Credit Wallet";
+            verifyBtn.type = "button"; verifyBtn.className = "verify-btn";
+            verifyBtn.textContent = "2. Verify & Credit Wallet";
             verifyBtn.onclick = () => verifyTopUp(currentReferenceId, false);
             alertBox.appendChild(verifyBtn);
 
-            // Auto-check Flutterwave every 4 seconds (up to 3 minutes)
+            showToast("📱 MoMo prompt sent! Check your phone.", "info", 6000);
             startVerifyPolling(currentReferenceId);
         } else {
             alertBox.className = "alert err";
-            alertBox.innerText = data.error || "Failed to initiate payment.";
+            alertBox.textContent = data.error || "Failed to initiate payment.";
+            showToast(data.error || "Payment initiation failed.", "err");
         }
-    } catch (err) {
+    } catch (_) {
         alertBox.style.display = "block";
         alertBox.className = "alert err";
-        alertBox.innerText = "Network error. Please check your connection and try again.";
+        alertBox.textContent = "Network error. Please check your connection and try again.";
+        showToast("Network error. Please try again.", "err");
     } finally {
         btn.disabled = false;
         updateNetworkStyle();
     }
 }
 
+/* ═══════════════════════════════════════════════════════════════════════
+   VERIFY TOP-UP
+════════════════════════════════════════════════════════════════════════ */
 async function verifyTopUp(refId, isSilent) {
     const alertBox = document.getElementById("statusBox");
     if (!isSilent) {
         alertBox.style.display = "block";
         alertBox.className = "alert info";
-        alertBox.innerText = "Verifying payment with Flutterwave...";
+        alertBox.textContent = "Verifying payment with Flutterwave…";
     }
-
     try {
-        const res = await fetch("/api/parent/topup/verify/", {
+        const res  = await fetch("/api/parent/topup/verify/", {
             method: "POST",
-            headers: {
-                "Content-Type": "application/json",
-                "X-CSRFToken": getCookie("csrftoken")
-            },
+            headers: { "Content-Type": "application/json", "X-CSRFToken": getCookie("csrftoken") },
             body: JSON.stringify({ reference_id: refId })
         });
         const data = await res.json();
@@ -282,49 +630,59 @@ async function verifyTopUp(refId, isSilent) {
             try { sessionStorage.removeItem("canteenpay_pending_ref"); } catch (_) {}
             alertBox.style.display = "block";
             alertBox.className = "alert ok";
-            alertBox.innerText = `✓ ${data.message} (New Balance: UGX ${Number(data.new_balance).toLocaleString()})`;
+            const bal = Number(data.new_balance).toLocaleString("en-UG");
+            alertBox.textContent = `🎉 ✓ ${data.message} (New Balance: UGX ${bal})`;
+            showToast(`✅ Wallet credited! New balance: UGX ${bal}`, "ok", 7000);
+            setTimeout(() => {
+                document.getElementById("amount").value = "";
+                document.getElementById("costBreakdown").style.display = "none";
+                document.getElementById("amount").classList.remove("field-ok", "field-err");
+                updateNetworkStyle();
+            }, 10000);
         } else if (data.status === "FAILED") {
             if (verifyPollTimer) clearInterval(verifyPollTimer);
             try { sessionStorage.removeItem("canteenpay_pending_ref"); } catch (_) {}
             alertBox.style.display = "block";
             alertBox.className = "alert err";
-            alertBox.innerText = data.error || "Payment was not completed.";
+            alertBox.textContent = data.error || "Payment was not completed.";
+            if (!isSilent) showToast(data.error || "Payment failed.", "err");
         } else if (!isSilent) {
             alertBox.style.display = "block";
             alertBox.className = "alert info";
-            alertBox.innerText = data.message || data.error;
+            alertBox.textContent = data.message || data.error;
         }
-    } catch (err) {
+    } catch (_) {
         if (!isSilent) {
             alertBox.style.display = "block";
             alertBox.className = "alert err";
-            alertBox.innerText = "Unable to verify payment right now. Please try again.";
+            alertBox.textContent = "Unable to verify payment right now. Please try again.";
         }
     }
 }
 
+function openFlwAuth() {
+    if (!currentFlwAuthUrl || currentFlwAuthUrl === "undefined" || currentFlwAuthUrl === "null") {
+        showToast("Missing Flutterwave authorization URL from server.", "err"); return;
+    }
+    const win = window.open(currentFlwAuthUrl, "_blank");
+    if (!win) window.location.href = currentFlwAuthUrl;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+   INIT — resume pending payment on page load
+════════════════════════════════════════════════════════════════════════ */
 document.addEventListener("DOMContentLoaded", () => {
-    const params = new URLSearchParams(window.location.search);
-    let savedRef = null;
+    const params  = new URLSearchParams(window.location.search);
+    let savedRef  = null;
     try { savedRef = sessionStorage.getItem("canteenpay_pending_ref"); } catch (_) {}
     const resumeRef = (params.get("ref") || savedRef || "").trim();
     if (resumeRef) {
         currentReferenceId = resumeRef;
         verifyTopUp(resumeRef, false);
         startVerifyPolling(resumeRef);
+        showToast("Resuming payment verification…", "info", 3500);
     }
 });
-
-function openFlwAuth() {
-    if (!currentFlwAuthUrl || currentFlwAuthUrl === "undefined" || currentFlwAuthUrl === "null") {
-        alert("Missing Flutterwave authorization URL from server.");
-        return;
-    }
-    const win = window.open(currentFlwAuthUrl, "_blank");
-    if (!win) {
-        window.location.href = currentFlwAuthUrl;
-    }
-}
 </script>
 </body>
 </html>

@@ -4,25 +4,40 @@
     <meta charset="UTF-8">
     <title>CanteenPay | Bursar Daily Settlement Report</title>
     <style>
-        body { font-family: system-ui, sans-serif; background: #f9fafb; padding: 24px; color: #111827; }
-        .wrapper { max-width: 980px; margin: 0 auto; background: #fff; padding: 24px; border-radius: 10px; box-shadow: 0 2px 8px rgba(0,0,0,0.06); }
-        .header { display: flex; justify-content: space-between; align-items: center; border-bottom: 2px solid #e5e7eb; padding-bottom: 14px; flex-wrap: wrap; gap: 12px; }
+        :root {
+            --bg: #f9fafb; --card: #ffffff; --text: #111827; --muted: #6b7280;
+            --border: #e5e7eb; --th-bg: #f3f4f6; --box-bg: #f8fafc; --box-brd: #d1d5db;
+            --input-bg: #ffffff; --input-txt: #111827;
+        }
+        [data-theme="dark"] {
+            --bg: #111827; --card: #1f2937; --text: #f9fafb; --muted: #9ca3af;
+            --border: #374151; --th-bg: #374151; --box-bg: #111827; --box-brd: #374151;
+            --input-bg: #374151; --input-txt: #f9fafb;
+        }
+        body { font-family: system-ui, sans-serif; background: var(--bg); padding: 24px; color: var(--text); transition: background 0.2s, color 0.2s; }
+        .wrapper { max-width: 980px; margin: 0 auto; background: var(--card); padding: 24px; border-radius: 10px; box-shadow: 0 2px 8px rgba(0,0,0,0.06); }
+        .header { display: flex; justify-content: space-between; align-items: center; border-bottom: 2px solid var(--border); padding-bottom: 14px; flex-wrap: wrap; gap: 12px; }
         table { width: 100%; border-collapse: collapse; margin-top: 20px; }
-        th, td { padding: 12px; border-bottom: 1px solid #e5e7eb; text-align: left; }
-        th { background: #f3f4f6; font-size: 0.9rem; }
+        th, td { padding: 12px; border-bottom: 1px solid var(--border); text-align: left; }
+        th { background: var(--th-bg); font-size: 0.9rem; }
         .money { font-family: monospace; font-weight: bold; font-size: 1rem; }
         .btn { padding: 8px 16px; background: #111827; color: #fff; border: none; border-radius: 6px; cursor: pointer; font-weight: 600; }
-        .cash-box { margin-top: 28px; padding: 18px; border: 1px solid #d1d5db; border-radius: 8px; background: #f8fafc; }
-        .cash-box h3 { margin: 0 0 12px; font-size: 1.05rem; color: #065f46; }
+        [data-theme="dark"] .btn { background: #374151; }
+        .cash-box { margin-top: 28px; padding: 18px; border: 1px solid var(--box-brd); border-radius: 8px; background: var(--box-bg); }
+        .cash-box h3 { margin: 0 0 12px; font-size: 1.05rem; color: #10b981; }
         .cash-form { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; align-items: end; }
-        .cash-form label { display: block; font-size: 0.85rem; font-weight: 600; margin-bottom: 4px; color: #374151; }
-        .cash-form input { width: 100%; padding: 9px 10px; border: 1px solid #d1d5db; border-radius: 6px; box-sizing: border-box; font-size: 0.95rem; }
+        .cash-form label { display: block; font-size: 0.85rem; font-weight: 600; margin-bottom: 4px; color: var(--text); }
+        .cash-form input, input[type="date"] { width: 100%; padding: 9px 10px; border: 1px solid var(--box-brd); border-radius: 6px; box-sizing: border-box; font-size: 0.95rem; background: var(--input-bg); color: var(--input-txt); }
         .lookup-badge { margin-top: 8px; padding: 8px 10px; border-radius: 6px; font-size: 0.88rem; font-weight: 600; display: none; }
         .msg { padding: 12px 14px; border-radius: 6px; margin-top: 14px; font-size: 0.92rem; font-weight: 600; }
         .msg-success { background: #d1fae5; color: #065f46; border: 1px solid #10b981; }
         .msg-error { background: #fef2f2; color: #991b1b; border: 1px solid #f87171; }
-        .subnote { display: block; font-size: 0.8rem; color: #6b7280; font-weight: normal; }
-        @media print { .no-print { display: none; } }
+        .subnote { display: block; font-size: 0.8rem; color: var(--muted); font-weight: normal; }
+        @media print {
+            .no-print { display: none; }
+            body { background: #ffffff !important; color: #111827 !important; }
+            .wrapper { background: #ffffff !important; box-shadow: none; }
+        }
     </style>
 </head>
 <body>
@@ -32,12 +47,13 @@
             <h2 style="margin:0;">Daily Canteen &amp; Pocket Money Settlement</h2>
             <p style="margin:4px 0 0; color:#6b7280;">Date: <strong>{{ report_date }}</strong></p>
         </div>
-        <div class="no-print">
-            <form method="get" style="display:inline;">
-                <input type="date" name="date" value="{{ report_date|date:'Y-m-d' }}" style="padding:7px;">
+        <div class="no-print" style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+            <form method="get" style="display:inline-flex; gap:6px; align-items:center;">
+                <input type="date" name="date" value="{{ report_date|date:'Y-m-d' }}" style="padding:7px; width:auto;">
                 <button type="submit" class="btn">Filter</button>
             </form>
             <button onclick="window.print()" class="btn" style="background:#059669;">Print Report</button>
+            <button type="button" id="themeToggle" onclick="toggleTheme()" class="btn" title="Toggle dark / light mode">🌙 Dark</button>
         </div>
     </div>
 
@@ -141,6 +157,36 @@
     {% endif %}
 </div>
 <script>
+const THEME_KEY = "canteenpay_theme";
+function applyTheme(dark) {
+    document.documentElement.setAttribute("data-theme", dark ? "dark" : "light");
+    const btn = document.getElementById("themeToggle");
+    if (btn) btn.textContent = dark ? "☀️ Light" : "🌙 Dark";
+    try { localStorage.setItem(THEME_KEY, dark ? "dark" : "light"); } catch (_) {}
+}
+function toggleTheme() {
+    applyTheme(document.documentElement.getAttribute("data-theme") !== "dark");
+}
+(function initTheme() {
+    let saved = null;
+    try { saved = localStorage.getItem(THEME_KEY); } catch (_) {}
+    const prefersDark = saved ? saved === "dark" : window.matchMedia("(prefers-color-scheme: dark)").matches;
+    applyTheme(prefersDark);
+})();
+
+// Format all UGX numbers in report tables with thousand commas
+document.addEventListener("DOMContentLoaded", () => {
+    document.querySelectorAll(".money, .subnote").forEach((el) => {
+        el.childNodes.forEach((node) => {
+            if (node.nodeType === Node.TEXT_NODE && node.textContent.includes("UGX")) {
+                node.textContent = node.textContent.replace(/UGX\s+(\d+)/g, (_, num) =>
+                    `UGX ${Number(num).toLocaleString("en-UG")}`
+                );
+            }
+        });
+    });
+});
+
 async function lookupCashStudent() {
     const regNo = document.getElementById("cashRegNo").value.trim();
     const badge = document.getElementById("cashStudentBadge");

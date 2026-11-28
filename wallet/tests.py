@@ -1075,6 +1075,74 @@ class CanteenPayProductionTests(TestCase):
                 "https://api.flutterwave.com/v3/transactions/verify_by_reference?tx_ref=tx-abc",
             )
 
+    @patch("wallet.views.initiate_ug_mobile_money_split")
+    def test_phone_validation_rejects_invalid_and_accepts_valid_ug_numbers(self, mock_split):
+        """Strict Uganda phone validation rejects short/long/unknown numbers and accepts valid MTN/Airtel formats."""
+        mock_split.return_value = {"status": "success", "meta": {"authorization": {"redirect": "https://pay.test/otp"}}}
+
+        # Too short
+        res_short = self.client.post(
+            "/api/parent/topup/",
+            data=json.dumps({"student_reg_no": self.student.student_reg_no, "amount": "5000", "payer_phone": "077123"}),
+            content_type="application/json",
+        )
+        self.assertEqual(res_short.status_code, 400)
+        self.assertIn("too short", res_short.json()["error"].lower())
+
+        # Too long
+        res_long = self.client.post(
+            "/api/parent/topup/",
+            data=json.dumps({"student_reg_no": self.student.student_reg_no, "amount": "5000", "payer_phone": "077123456789"}),
+            content_type="application/json",
+        )
+        self.assertEqual(res_long.status_code, 400)
+        self.assertIn("too long", res_long.json()["error"].lower())
+
+        # Invalid international length
+        res_intl_bad = self.client.post(
+            "/api/parent/topup/",
+            data=json.dumps({"student_reg_no": self.student.student_reg_no, "amount": "5000", "payer_phone": "25677123"}),
+            content_type="application/json",
+        )
+        self.assertEqual(res_intl_bad.status_code, 400)
+        self.assertIn("international format", res_intl_bad.json()["error"].lower())
+
+        # Unrecognised network prefix
+        res_bad_net = self.client.post(
+            "/api/parent/topup/",
+            data=json.dumps({"student_reg_no": self.student.student_reg_no, "amount": "5000", "payer_phone": "0712345678"}),
+            content_type="application/json",
+        )
+        self.assertEqual(res_bad_net.status_code, 400)
+        self.assertIn("unrecognised network", res_bad_net.json()["error"].lower())
+        mock_split.assert_not_called()
+
+        # Valid local + international formats succeed (202 Accepted) and normalize to 256XXXXXXXXX
+        for valid_phone, expected_norm in (
+            ("0772123456", "256772123456"),
+            ("+256752123456", "256752123456"),
+            ("256 782 123 456", "256782123456"),
+        ):
+            res_ok = self.client.post(
+                "/api/parent/topup/",
+                data=json.dumps({"student_reg_no": self.student.student_reg_no, "amount": "5000", "payer_phone": valid_phone}),
+                content_type="application/json",
+            )
+            self.assertEqual(res_ok.status_code, 202, f"Expected 202 for {valid_phone}: {res_ok.content}")
+            topup = WalletTopUp.objects.get(momo_reference_id=res_ok.json()["reference_id"])
+            self.assertEqual(topup.payer_phone, expected_norm)
+
+    def test_parent_and_pos_ui_enhancements_rendered(self):
+        """Parent top-up and POS pages render toasts, theme toggle, UGX formatting, and offline guards."""
+        parent_html = self.client.get("/").content.decode()
+        for snippet in ("toastContainer", "themeToggle", "validateUgPhone", "toLocaleString", "offlineBanner"):
+            self.assertIn(snippet, parent_html)
+
+        self.client.login(username="canteen_staff", password="StrongPassword123!")
+        pos_html = self.client.get("/pos/").content.decode()
+        for snippet in ("toastContainer", "themeToggle", "itemsCounter", "startAutoResetCountdown", "offlineBanner", "sessionBanner"):
+            self.assertIn(snippet, pos_html)
+
 
 class OnCommitSMSTests(TransactionTestCase):
     @patch("wallet.aggregator_service.send_topup_receipt_sms")

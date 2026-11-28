@@ -133,6 +133,20 @@ LOGIN_URL = "/staff/login/"
 LOGIN_REDIRECT_URL = "/pos/"
 LOGOUT_REDIRECT_URL = "/staff/login/"
 
+# Email (SMTP via env in production; console backend in local dev / unconfigured)
+EMAIL_HOST = os.environ.get("EMAIL_HOST", "")
+if EMAIL_HOST:
+    EMAIL_BACKEND = "django.core.mail.backends.smtp.EmailBackend"
+    EMAIL_PORT = int(os.environ.get("EMAIL_PORT", "587"))
+    EMAIL_USE_TLS = os.environ.get("EMAIL_USE_TLS", "True") == "True"
+    EMAIL_HOST_USER = os.environ.get("EMAIL_HOST_USER", "")
+    EMAIL_HOST_PASSWORD = os.environ.get("EMAIL_HOST_PASSWORD", "")
+else:
+    EMAIL_BACKEND = "django.core.mail.backends.console.EmailBackend"
+DEFAULT_FROM_EMAIL = os.environ.get(
+    "DEFAULT_FROM_EMAIL", "CanteenPay Uganda <amadilemajid10@gmail.com>"
+)
+
 
 # Africa's Talking SMS Configuration
 AT_USERNAME = os.environ.get("AT_USERNAME", "sandbox")

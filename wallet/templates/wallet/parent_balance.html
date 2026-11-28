@@ -1,0 +1,210 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="icon" href="data:,">
+    <title>CanteenPay | Parent Balance &amp; Activity</title>
+    <style>
+        :root {
+            --bg: #f4f6f8; --card: #ffffff; --text: #111827; --muted: #6b7280;
+            --border: #d1d5db; --input-bg: #ffffff; --input-txt: #111827;
+            --pill-bg: #ecfdf5; --pill-txt: #065f46; --pill-brd: #10b981;
+        }
+        [data-theme="dark"] {
+            --bg: #111827; --card: #1f2937; --text: #f9fafb; --muted: #9ca3af;
+            --border: #374151; --input-bg: #374151; --input-txt: #f9fafb;
+            --pill-bg: #064e3b; --pill-txt: #a7f3d0; --pill-brd: #059669;
+        }
+        *, *::before, *::after { box-sizing: border-box; }
+        body { font-family: system-ui, sans-serif; background: var(--bg); color: var(--text); margin: 0; padding: 20px; transition: background 0.2s, color 0.2s; }
+        .top-nav {
+            max-width: 460px; margin: 0 auto 14px;
+            display: flex; justify-content: space-between; align-items: center; gap: 8px; flex-wrap: wrap;
+        }
+        .nav-links { display: flex; gap: 6px; flex-wrap: wrap; }
+        .nav-links a {
+            font-size: 0.8rem; font-weight: 700; text-decoration: none;
+            padding: 6px 10px; border-radius: 7px; border: 1px solid var(--border);
+            color: var(--text); background: var(--card);
+        }
+        .nav-links a.active { background: #059669; color: #fff; border-color: #059669; }
+        #themeToggle {
+            padding: 6px 10px; border-radius: 7px; border: 1px solid var(--border);
+            background: var(--card); color: var(--text); cursor: pointer; font-size: 0.85rem; font-weight: 600;
+        }
+        .card { max-width: 460px; margin: 0 auto; background: var(--card); padding: 24px; border-radius: 12px; box-shadow: 0 4px 12px rgba(0,0,0,0.08); }
+        h2 { margin-top: 0; font-size: 1.35rem; }
+        label { display: block; font-weight: 600; margin: 14px 0 6px; font-size: 0.9rem; }
+        input {
+            width: 100%; padding: 12px; border: 1px solid var(--border); border-radius: 8px;
+            font-size: 1rem; background: var(--input-bg); color: var(--input-txt);
+        }
+        input:focus { outline: 2px solid #10b981; border-color: #10b981; }
+        button.submit-btn {
+            width: 100%; padding: 13px; margin-top: 18px; border: none; border-radius: 8px;
+            background: #059669; color: #fff; font-weight: 700; font-size: 1rem; cursor: pointer;
+        }
+        button.submit-btn:disabled { opacity: 0.6; cursor: not-allowed; }
+        .err-box {
+            display: none; margin-top: 14px; padding: 11px; border-radius: 8px;
+            background: #fef2f2; color: #991b1b; border: 1px solid #f87171; font-weight: 600; font-size: 0.9rem;
+        }
+        [data-theme="dark"] .err-box { background: #450a0a; color: #fca5a5; border-color: #991b1b; }
+        .summary-box {
+            display: none; margin-top: 18px; padding: 16px; border-radius: 10px;
+            background: var(--pill-bg); border: 1px solid var(--pill-brd); color: var(--pill-txt);
+        }
+        .bal-num { font-size: 1.7rem; font-weight: 800; font-family: monospace; margin: 6px 0; }
+        .activity-list { margin-top: 14px; display: flex; flex-direction: column; gap: 8px; }
+        .act-row {
+            display: flex; justify-content: space-between; align-items: center; gap: 8px;
+            background: var(--card); color: var(--text); border: 1px solid var(--border);
+            padding: 9px 11px; border-radius: 8px; font-size: 0.85rem;
+        }
+        .act-amt { font-family: monospace; font-weight: 800; white-space: nowrap; }
+        .act-amt.plus { color: #059669; }
+        .act-amt.minus { color: #dc2626; }
+    </style>
+</head>
+<body>
+<div class="top-nav">
+    <nav class="nav-links">
+        <a href="/">Send Money</a>
+        <a href="{% url 'parent_balance_page' %}" class="active">Check Balance</a>
+        <a href="{% url 'school_register_page' %}">Register School</a>
+        <a href="/policies/">Policies</a>
+    </nav>
+    <button type="button" id="themeToggle" onclick="toggleTheme()">🌙 Dark</button>
+</div>
+
+<div class="card">
+    {% csrf_token %}
+    <h2>Check Student Wallet &amp; History</h2>
+    <p style="color:var(--muted); font-size:0.9rem;">Enter your child's CanteenPay code and 4-digit PIN to view live balance and recent transactions.</p>
+
+    <label for="regNo">CanteenPay Code</label>
+    <input type="text" id="regNo" placeholder="e.g. ARI-0001" autocomplete="off">
+
+    <label for="pin">Student 4-Digit PIN</label>
+    <input type="password" id="pin" maxlength="4" inputmode="numeric" placeholder="****" autocomplete="new-password">
+
+    <button type="button" id="checkBtn" class="submit-btn" onclick="checkWalletBalance()">View Wallet Balance &amp; Activity</button>
+
+    <div id="errBox" class="err-box" role="alert"></div>
+
+    <div id="summaryBox" class="summary-box" role="status" aria-live="polite">
+        <div id="studentTitle" style="font-weight:700; font-size:1rem;"></div>
+        <div class="bal-num" id="walletBal"></div>
+        <div id="limitLine" style="font-size:0.84rem; font-weight:600;"></div>
+        <div class="activity-list" id="activityList"></div>
+    </div>
+</div>
+
+<script>
+const THEME_KEY = "canteenpay_theme";
+function applyTheme(dark) {
+    document.documentElement.setAttribute("data-theme", dark ? "dark" : "light");
+    document.getElementById("themeToggle").textContent = dark ? "☀️ Light" : "🌙 Dark";
+    try { localStorage.setItem(THEME_KEY, dark ? "dark" : "light"); } catch (_) {}
+}
+function toggleTheme() { applyTheme(document.documentElement.getAttribute("data-theme") !== "dark"); }
+(function () {
+    let saved = null;
+    try { saved = localStorage.getItem(THEME_KEY); } catch (_) {}
+    const prefersDark = saved ? saved === "dark" : window.matchMedia("(prefers-color-scheme: dark)").matches;
+    applyTheme(prefersDark);
+})();
+
+function getCookie(name) {
+    let v = null;
+    if (document.cookie) {
+        for (const c of document.cookie.split(";")) {
+            const t = c.trim();
+            if (t.startsWith(name + "=")) { v = decodeURIComponent(t.slice(name.length + 1)); break; }
+        }
+    }
+    if (!v && name === "csrftoken") {
+        const el = document.querySelector("[name=csrfmiddlewaretoken]");
+        if (el) v = el.value;
+    }
+    return v || "";
+}
+
+async function checkWalletBalance() {
+    const regNo = document.getElementById("regNo").value.trim();
+    const pin = document.getElementById("pin").value.trim();
+    const errBox = document.getElementById("errBox");
+    const summaryBox = document.getElementById("summaryBox");
+    const btn = document.getElementById("checkBtn");
+
+    errBox.style.display = "none";
+    summaryBox.style.display = "none";
+
+    if (!regNo || !pin) {
+        errBox.textContent = "Please enter both your child's CanteenPay code and 4-digit PIN.";
+        errBox.style.display = "block";
+        return;
+    }
+
+    btn.disabled = true;
+    btn.textContent = "Checking...";
+    try {
+        const res = await fetch("/api/parent/balance/", {
+            method: "POST",
+            headers: { "Content-Type": "application/json", "X-CSRFToken": getCookie("csrftoken") },
+            body: JSON.stringify({ student_reg_no: regNo, pin })
+        });
+        const data = await res.json();
+        if (!res.ok) {
+            errBox.textContent = data.error || "Unable to verify code and PIN.";
+            errBox.style.display = "block";
+            return;
+        }
+        const cls = data.class_stream ? ` (${data.class_stream})` : "";
+        document.getElementById("studentTitle").textContent = `${data.student_name}${cls} · ${data.school}`;
+        document.getElementById("walletBal").textContent = `UGX ${Number(data.wallet_balance).toLocaleString("en-UG")}`;
+        document.getElementById("limitLine").textContent =
+            `Daily Cap: UGX ${Number(data.daily_limit).toLocaleString("en-UG")} · Remaining Today: UGX ${Number(data.remaining_daily_limit).toLocaleString("en-UG")}`;
+
+        const listEl = document.getElementById("activityList");
+        listEl.innerHTML = "";
+        const items = data.recent_activity || [];
+        if (!items.length) {
+            const empty = document.createElement("div");
+            empty.className = "act-row";
+            empty.textContent = "No recent transactions recorded yet.";
+            listEl.appendChild(empty);
+        } else {
+            items.forEach((act) => {
+                const row = document.createElement("div");
+                row.className = "act-row";
+                const left = document.createElement("div");
+                const strong = document.createElement("strong");
+                strong.textContent = act.title;
+                const sub = document.createElement("div");
+                sub.style.cssText = "font-size:0.75rem; color:var(--muted);";
+                sub.textContent = `${act.time} · Ref ${act.ref}`;
+                left.appendChild(strong);
+                left.appendChild(sub);
+                const right = document.createElement("div");
+                right.className = `act-amt ${String(act.amount).startsWith("+") ? "plus" : "minus"}`;
+                right.textContent = `UGX ${act.amount}`;
+                row.appendChild(left);
+                row.appendChild(right);
+                listEl.appendChild(row);
+            });
+        }
+        summaryBox.style.display = "block";
+        document.getElementById("pin").value = "";
+    } catch (_) {
+        errBox.textContent = "Network error. Please check your connection and try again.";
+        errBox.style.display = "block";
+    } finally {
+        btn.disabled = false;
+        btn.textContent = "View Wallet Balance & Activity";
+    }
+}
+</script>
+</body>
+</html>

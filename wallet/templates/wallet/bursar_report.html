@@ -48,6 +48,10 @@
             <p style="margin:4px 0 0; color:#6b7280;">Date: <strong>{{ report_date }}</strong></p>
         </div>
         <div class="no-print" style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+            <a href="{% url 'canteen_pos_page' %}" class="btn" style="background:#0f766e; text-decoration:none;">POS</a>
+            <a href="{% url 'daily_topup_noticeboard' %}" class="btn" style="background:#374151; text-decoration:none;">Noticeboard</a>
+            <a href="{% url 'wallet_cards_page' %}" class="btn" style="background:#374151; text-decoration:none;">Wallet Cards</a>
+            <a href="{% url 'password_change' %}" class="btn" style="background:#374151; text-decoration:none;">Password</a>
             <form method="get" style="display:inline-flex; gap:6px; align-items:center;">
                 <input type="date" name="date" value="{{ report_date|date:'Y-m-d' }}" style="padding:7px; width:auto;">
                 <button type="submit" class="btn">Filter</button>
@@ -143,6 +147,71 @@
                 <td><strong>{{ att.username }}</strong></td>
                 <td>{{ att.order_count }} sale{{ att.order_count|pluralize }}</td>
                 <td class="money" style="color:#059669;">UGX {{ att.total_sales|floatformat:0 }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    {% endif %}
+
+    {% if top_items %}
+    <h3 style="margin-top:26px; font-size:1rem;">Top-Selling Canteen Items ({{ report_date }})</h3>
+    <table>
+        <thead>
+            <tr>
+                <th>Item / Note</th>
+                <th>Orders</th>
+                <th>Gross Sales</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for item in top_items %}
+            <tr>
+                <td><strong>{{ item.item_name }}</strong></td>
+                <td>{{ item.order_count }} order{{ item.order_count|pluralize }}</td>
+                <td class="money" style="color:#059669;">UGX {{ item.total_amount|floatformat:0 }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    {% endif %}
+
+    {% if daily_orders %}
+    <h3 style="margin-top:26px; font-size:1rem;">Daily Canteen Orders &amp; In-Page Refunds ({{ report_date }})</h3>
+    <table>
+        <thead>
+            <tr>
+                <th>Time</th>
+                <th>Code</th>
+                <th>Student</th>
+                <th>Item</th>
+                <th>Amount</th>
+                <th>Attendant</th>
+                <th class="no-print">Refund Action</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for order in daily_orders %}
+            <tr>
+                <td>{{ order.created_at|date:"H:i" }}</td>
+                <td style="font-family:monospace; font-weight:bold;">{{ order.student.student_reg_no }}</td>
+                <td>{{ order.student.full_name }}</td>
+                <td>{{ order.items_note|default:"-" }}</td>
+                <td class="money">UGX {{ order.amount|floatformat:0 }}</td>
+                <td>{{ order.attendant.username|default:"staff" }}</td>
+                <td class="no-print">
+                    {% if order.refund %}
+                    <span style="color:#dc2626; font-weight:700; font-size:0.82rem;">REFUNDED ({{ order.refund.reason }})</span>
+                    {% else %}
+                    <form method="post" style="display:flex; gap:4px; align-items:center;" onsubmit="return confirm('Refund UGX {{ order.amount|floatformat:0 }} to {{ order.student.full_name }}?');">
+                        {% csrf_token %}
+                        <input type="hidden" name="action" value="refund_order">
+                        <input type="hidden" name="report_date" value="{{ report_date|date:'Y-m-d' }}">
+                        <input type="hidden" name="order_id" value="{{ order.id }}">
+                        <input type="text" name="refund_reason" placeholder="Reason" required style="padding:5px 7px; font-size:0.8rem; width:110px;">
+                        <button type="submit" class="btn" style="background:#dc2626; padding:5px 9px; font-size:0.78rem;">Refund</button>
+                    </form>
+                    {% endif %}
+                </td>
             </tr>
             {% endfor %}
         </tbody>

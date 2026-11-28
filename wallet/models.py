@@ -283,3 +283,26 @@ class BursarCashTopUp(models.Model):
 
     def __str__(self):
         return f"Cash {self.student.student_reg_no} - UGX {self.amount}"
+
+
+class SchoolOnboardingRequest(models.Model):
+    STATUS_CHOICES = [
+        ("PENDING", "Pending Review"),
+        ("CONTACTED", "Contacted"),
+        ("APPROVED", "Onboarded"),
+        ("DECLINED", "Declined"),
+    ]
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    school_name = models.CharField(max_length=150)
+    district = models.CharField(max_length=80)
+    approx_students = models.PositiveIntegerField(default=300)
+    contact_name = models.CharField(max_length=120)
+    contact_role = models.CharField(max_length=60, default="Bursar / Headteacher")
+    contact_phone = models.CharField(max_length=20)
+    contact_email = models.EmailField(blank=True, default="")
+    notes = models.TextField(blank=True, default="")
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default="PENDING")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return f"{self.school_name} ({self.district}) - {self.status}"

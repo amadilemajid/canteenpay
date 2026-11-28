@@ -36,6 +36,7 @@ from .models import (
     CanteenOrder,
     CanteenRefund,
     School,
+    SchoolOnboardingRequest,
     Student,
     WalletTopUp,
 )
@@ -809,25 +810,209 @@ def policies_page(request):
     return render(request, "wallet/policies.html")
 
 
-@require_GET
-def lookup_student(request):
-    if not request.user.is_authenticated:
-        ip = _client_ip(request)
-        cache_key = f"lookup_rl:{ip}"
-        if cache.add(cache_key, 1, timeout=LOOKUP_RATE_WINDOW_SECONDS):
+def _is_ip_rate_limited(request, prefix: str) -> bool:
+    """Shared IP rate-limiter using Django cache across public lookup endpoints."""
+    ip = _client_ip(request)
+    cache_key = f"{prefix}:{ip}"
+    if cache.add(cache_key, 1, timeout=LOOKUP_RATE_WINDOW_SECONDS):
+        attempts = 1
+    else:
+        try:
+            attempts = cache.incr(cache_key)
+        except ValueError:
+            cache.set(cache_key, 1, timeout=LOOKUP_RATE_WINDOW_SECONDS)
             attempts = 1
+    return attempts > LOOKUP_RATE_LIMIT
+
+
+@ensure_csrf_cookie
+@never_cache
+def parent_balance_page(request):
+    return render(request, "wallet/parent_balance.html")
+
+
+@require_POST
+def parent_balance_lookup(request):
+    """
+    Allows parents (rate-limited, with 5-attempt PIN lockout) to check their child's
+    wallet balance, daily spend allowance, and last 5 wallet activities using Code + 4-digit PIN.
+    """
+    if _is_ip_rate_limited(request, "parent_bal_rl"):
+        return JsonResponse(
+            {"error": "Too many balance attempts. Please wait a minute."},
+            status=429,
+        )
+
+    data = _parse_json_body(request)
+    if data is None:
+        return JsonResponse({"error": "Invalid request payload."}, status=400)
+
+    reg_no = str(data.get("student_reg_no", "")).strip()
+    raw_pin = str(data.get("pin", "")).strip()
+    if not reg_no or not raw_pin:
+        return JsonResponse(
+            {"error": "CanteenPay code and 4-digit PIN are required."},
+            status=400,
+        )
+
+    try:
+        with transaction.atomic():
+            student = (
+                Student.objects.select_for_update()
+                .select_related("school")
+                .get(student_reg_no__iexact=reg_no, is_active=True)
+            )
+            pin_error = _verify_pin_or_lockout(student, raw_pin)
+            if pin_error is not None:
+                return pin_error
+
+            today = timezone.localdate()
+            spent_today = _student_net_spent_today(student, today)
+            daily_limit = student.effective_daily_spend_limit()
+            remaining_daily = max(daily_limit - spent_today, Decimal("0.00"))
+
+        activity = []
+        for order in CanteenOrder.objects.filter(student=student).order_by("-created_at")[:5]:
+            activity.append(
+                (
+                    order.created_at,
+                    {
+                        "kind": "PURCHASE",
+                        "title": order.items_note or "Canteen Purchase",
+                        "amount": f"-{int(order.amount):,}",
+                        "time": timezone.localtime(order.created_at).strftime("%d %b %H:%M"),
+                        "ref": str(order.id)[:8].upper(),
+                    },
+                )
+            )
+        for topup in WalletTopUp.objects.filter(student=student, status="SUCCESSFUL").order_by("-created_at")[:5]:
+            activity.append(
+                (
+                    topup.created_at,
+                    {
+                        "kind": "TOPUP",
+                        "title": "Mobile Money Top-Up",
+                        "amount": f"+{int(topup.amount):,}",
+                        "time": timezone.localtime(topup.created_at).strftime("%d %b %H:%M"),
+                        "ref": str(topup.momo_reference_id)[:8].upper(),
+                    },
+                )
+            )
+        for cash in BursarCashTopUp.objects.filter(student=student).order_by("-created_at")[:5]:
+            activity.append(
+                (
+                    cash.created_at,
+                    {
+                        "kind": "CASH",
+                        "title": cash.receipt_note or "Bursar Cash Deposit",
+                        "amount": f"+{int(cash.amount):,}",
+                        "time": timezone.localtime(cash.created_at).strftime("%d %b %H:%M"),
+                        "ref": f"CASH-{str(cash.id)[:6].upper()}",
+                    },
+                )
+            )
+        activity.sort(key=lambda pair: pair[0], reverse=True)
+
+        return JsonResponse(
+            {
+                "student_name": student.full_name,
+                "class_stream": student.class_stream,
+                "student_reg_no": student.student_reg_no,
+                "school": student.school.name,
+                "wallet_balance": str(student.wallet_balance),
+                "daily_limit": str(daily_limit),
+                "spent_today": str(spent_today),
+                "remaining_daily_limit": str(remaining_daily),
+                "recent_activity": [item for _, item in activity[:5]],
+            },
+            status=200,
+        )
+    except Student.DoesNotExist:
+        return JsonResponse({"error": "Student ID not found or inactive."}, status=404)
+    except Exception:
+        logger.exception("Unexpected error in parent_balance_lookup for %s", reg_no)
+        return JsonResponse(
+            {"error": "Unable to check balance right now. Please try again."},
+            status=500,
+        )
+
+
+UGANDA_DISTRICTS = [
+    "Kampala", "Wakiso", "Mukono", "Yumbe", "Arua", "Gulu", "Lira", "Mbale",
+    "Jinja", "Mbarara", "Masaka", "Entebbe", "Fort Portal", "Hoima", "Soroti",
+    "Tororo", "Kabale", "Kasese", "Iganga", "Koboko", "Moyo", "Adjumani", "Other",
+]
+
+STUDENT_COUNT_BANDS = [
+    ("150", "Under 200 students"),
+    ("350", "200 – 500 students"),
+    ("750", "500 – 1,000 students"),
+    ("1500", "1,000+ students"),
+]
+
+
+@ensure_csrf_cookie
+@never_cache
+def school_register_page(request):
+    """Public school onboarding / partnership request form (creates SchoolOnboardingRequest)."""
+    submitted_ref = None
+    form_error = None
+    form_data = {}
+
+    if request.method == "POST":
+        form_data = {
+            "school_name": (request.POST.get("school_name") or "").strip()[:150],
+            "district": (request.POST.get("district") or "").strip()[:80],
+            "approx_students": (request.POST.get("approx_students") or "350").strip(),
+            "contact_name": (request.POST.get("contact_name") or "").strip()[:120],
+            "contact_role": (request.POST.get("contact_role") or "School Bursar").strip()[:60],
+            "contact_phone": (request.POST.get("contact_phone") or "").strip(),
+            "contact_email": (request.POST.get("contact_email") or "").strip(),
+            "notes": (request.POST.get("notes") or "").strip()[:1000],
+        }
+        normalized_phone, phone_err = _validate_ug_phone(form_data["contact_phone"])
+        if not form_data["school_name"] or not form_data["district"] or not form_data["contact_name"]:
+            form_error = "Please enter the school name, district, and contact person's name."
+        elif phone_err:
+            form_error = phone_err
         else:
             try:
-                attempts = cache.incr(cache_key)
+                approx_num = max(1, int(form_data["approx_students"]))
             except ValueError:
-                cache.set(cache_key, 1, timeout=LOOKUP_RATE_WINDOW_SECONDS)
-                attempts = 1
-
-        if attempts > LOOKUP_RATE_LIMIT:
-            return JsonResponse(
-                {"error": "Too many lookup attempts. Please wait a minute."},
-                status=429,
+                approx_num = 300
+            req_obj = SchoolOnboardingRequest.objects.create(
+                school_name=form_data["school_name"],
+                district=form_data["district"],
+                approx_students=approx_num,
+                contact_name=form_data["contact_name"],
+                contact_role=form_data["contact_role"],
+                contact_phone=normalized_phone,
+                contact_email=form_data["contact_email"],
+                notes=form_data["notes"],
             )
+            submitted_ref = str(req_obj.id)[:8].upper()
+            form_data = {}
+
+    return render(
+        request,
+        "wallet/school_register.html",
+        {
+            "districts": UGANDA_DISTRICTS,
+            "student_bands": STUDENT_COUNT_BANDS,
+            "submitted_ref": submitted_ref,
+            "form_error": form_error,
+            "form_data": form_data,
+        },
+    )
+
+
+@require_GET
+def lookup_student(request):
+    if not request.user.is_authenticated and _is_ip_rate_limited(request, "lookup_rl"):
+        return JsonResponse(
+            {"error": "Too many lookup attempts. Please wait a minute."},
+            status=429,
+        )
 
     reg_no = request.GET.get("reg_no", "").strip()
     try:
@@ -864,7 +1049,7 @@ def _run_inline_reconciliation(view_name: str):
 
 
 def _build_settlement_csv(
-    report_date, schools_data, attendant_breakdown, recent_cash_topups
+    report_date, schools_data, attendant_breakdown, top_items, recent_cash_topups
 ) -> HttpResponse:
     """Builds a downloadable CSV settlement export for school auditors."""
     buffer = io.StringIO()
@@ -906,6 +1091,12 @@ def _build_settlement_csv(
         writer.writerow([att["username"], att["order_count"], int(att["total_sales"])])
 
     writer.writerow([])
+    writer.writerow(["Top-Selling Canteen Items"])
+    writer.writerow(["Item", "Orders", "Gross Total (UGX)"])
+    for item in top_items:
+        writer.writerow([item["item_name"], item["order_count"], int(item["total_amount"])])
+
+    writer.writerow([])
     writer.writerow(["Bursar Cash-In Log"])
     writer.writerow(
         ["Time", "Code", "Student", "School", "Amount (UGX)", "Receipt Note", "Received By"]
@@ -930,11 +1121,50 @@ def _build_settlement_csv(
     return response
 
 
+def _handle_bursar_refund_post(request, report_date):
+    """Processes an audited in-page full order refund from the Bursar Daily Report."""
+    order_id = (request.POST.get("order_id") or "").strip()
+    reason = (request.POST.get("refund_reason") or "").strip()[:255]
+    if not order_id or not reason:
+        messages.error(request, "Provide a refund reason before issuing a refund.")
+        return redirect(f"{request.path}?date={report_date:%Y-%m-%d}")
+
+    with transaction.atomic():
+        order = (
+            CanteenOrder.objects.select_for_update()
+            .select_related("student")
+            .filter(pk=order_id)
+            .first()
+        )
+        if order is None:
+            messages.error(request, "Canteen order not found.")
+            return redirect(f"{request.path}?date={report_date:%Y-%m-%d}")
+        if CanteenRefund.objects.filter(order=order).exists():
+            messages.error(request, "This canteen order has already been refunded.")
+            return redirect(f"{request.path}?date={report_date:%Y-%m-%d}")
+
+        CanteenRefund.objects.create(
+            order=order,
+            amount=order.amount,
+            reason=reason,
+            refunded_by=request.user,
+        )
+        order.student.refresh_from_db()
+    messages.success(
+        request,
+        (
+            f"Refunded UGX {int(order.amount):,} to {order.student.full_name} "
+            f"({order.student.student_reg_no}). New Balance: UGX {int(order.student.wallet_balance):,}."
+        ),
+    )
+    return redirect(f"{request.path}?date={report_date:%Y-%m-%d}")
+
+
 @staff_member_required(login_url="/staff/login/")
 def bursar_daily_report(request):
     """
     Displays today's online top-ups, bursar desk cash top-ups, and canteen sales,
-    and processes audited physical cash-in deposits from the bursar desk.
+    and processes audited physical cash-in deposits or in-page refunds from the bursar desk.
     Runs a lightweight reconciliation pass on PENDING top-ups each GET load.
     """
     report_date = _parse_report_date(
@@ -942,6 +1172,9 @@ def bursar_daily_report(request):
     )
 
     if request.method == "POST":
+        if (request.POST.get("action") or "").strip() == "refund_order":
+            return _handle_bursar_refund_post(request, report_date)
+
         reg_no = (request.POST.get("student_reg_no") or "").strip()
         receipt_note = (request.POST.get("receipt_note") or "").strip()[:255]
         raw_amount = (request.POST.get("amount") or "").replace(",", "").strip()
@@ -1070,9 +1303,30 @@ def bursar_daily_report(request):
         for row in attendant_rows
     ]
 
+    item_rows = (
+        CanteenOrder.objects.filter(created_at__date=report_date)
+        .values("items_note")
+        .annotate(total_amount=Sum("amount"), order_count=Count("id"))
+        .order_by("-total_amount")[:15]
+    )
+    top_items = [
+        {
+            "item_name": (row["items_note"] or "").strip() or "Unspecified Item",
+            "total_amount": row["total_amount"] or Decimal("0.00"),
+            "order_count": row["order_count"] or 0,
+        }
+        for row in item_rows
+    ]
+
+    daily_orders = (
+        CanteenOrder.objects.filter(created_at__date=report_date)
+        .select_related("student", "student__school", "attendant", "refund")
+        .order_by("-created_at")[:50]
+    )
+
     if (request.GET.get("export") or "").strip().lower() == "csv":
         return _build_settlement_csv(
-            report_date, schools_data, attendant_breakdown, recent_cash_topups
+            report_date, schools_data, attendant_breakdown, top_items, recent_cash_topups
         )
 
     return render(
@@ -1082,6 +1336,8 @@ def bursar_daily_report(request):
             "report_date": report_date,
             "schools_data": schools_data,
             "attendant_breakdown": attendant_breakdown,
+            "top_items": top_items,
+            "daily_orders": daily_orders,
             "recent_cash_topups": recent_cash_topups,
             "total_cash_collected": total_cash_collected,
         },

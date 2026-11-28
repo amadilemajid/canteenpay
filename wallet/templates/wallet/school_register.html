@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="icon" href="data:,">
+    <title>CanteenPay Uganda | Register Your School</title>
+    <style>
+        :root {
+            --bg: #f4f6f8; --card: #ffffff; --text: #111827; --muted: #6b7280;
+            --border: #d1d5db; --input-bg: #ffffff; --input-txt: #111827;
+        }
+        [data-theme="dark"] {
+            --bg: #111827; --card: #1f2937; --text: #f9fafb; --muted: #9ca3af;
+            --border: #374151; --input-bg: #374151; --input-txt: #f9fafb;
+        }
+        *, *::before, *::after { box-sizing: border-box; }
+        body { font-family: system-ui, sans-serif; background: var(--bg); color: var(--text); margin: 0; padding: 20px; transition: background 0.2s, color 0.2s; }
+        .top-nav {
+            max-width: 500px; margin: 0 auto 14px;
+            display: flex; justify-content: space-between; align-items: center; gap: 8px; flex-wrap: wrap;
+        }
+        .nav-links { display: flex; gap: 6px; flex-wrap: wrap; }
+        .nav-links a {
+            font-size: 0.8rem; font-weight: 700; text-decoration: none;
+            padding: 6px 10px; border-radius: 7px; border: 1px solid var(--border);
+            color: var(--text); background: var(--card);
+        }
+        .nav-links a.active { background: #059669; color: #fff; border-color: #059669; }
+        #themeToggle {
+            padding: 6px 10px; border-radius: 7px; border: 1px solid var(--border);
+            background: var(--card); color: var(--text); cursor: pointer; font-size: 0.85rem; font-weight: 600;
+        }
+        .card { max-width: 500px; margin: 0 auto; background: var(--card); padding: 24px; border-radius: 12px; box-shadow: 0 4px 12px rgba(0,0,0,0.08); }
+        h2 { margin-top: 0; font-size: 1.35rem; }
+        label { display: block; font-weight: 600; margin: 13px 0 5px; font-size: 0.9rem; }
+        input, select, textarea {
+            width: 100%; padding: 11px 12px; border: 1px solid var(--border); border-radius: 8px;
+            font-size: 0.98rem; background: var(--input-bg); color: var(--input-txt); font-family: inherit;
+        }
+        input:focus, select:focus, textarea:focus { outline: 2px solid #10b981; border-color: #10b981; }
+        button.submit-btn {
+            width: 100%; padding: 14px; margin-top: 18px; border: none; border-radius: 8px;
+            background: #059669; color: #fff; font-weight: 700; font-size: 1rem; cursor: pointer;
+        }
+        .ok-box {
+            margin-bottom: 16px; padding: 14px; border-radius: 8px;
+            background: #d1fae5; color: #065f46; border: 1px solid #10b981; font-weight: 600;
+        }
+        .err-box {
+            margin-bottom: 16px; padding: 12px; border-radius: 8px;
+            background: #fef2f2; color: #991b1b; border: 1px solid #f87171; font-weight: 600;
+        }
+    </style>
+</head>
+<body>
+<div class="top-nav">
+    <nav class="nav-links">
+        <a href="/">Send Money</a>
+        <a href="{% url 'parent_balance_page' %}">Check Balance</a>
+        <a href="{% url 'school_register_page' %}" class="active">Register School</a>
+        <a href="/policies/">Policies</a>
+    </nav>
+    <button type="button" id="themeToggle" onclick="toggleTheme()">🌙 Dark</button>
+</div>
+
+<div class="card">
+    <h2>Onboard Your School to CanteenPay</h2>
+    <p style="color:var(--muted); font-size:0.9rem;">
+        Headteachers, Bursars, and Directors: submit your school details to set up direct bank settlement, laminated QR wallet cards, and canteen POS access.
+    </p>
+
+    {% if submitted_ref %}
+    <div class="ok-box">
+        ✅ Application received (Ref <strong>{{ submitted_ref }}</strong>)! Our onboarding team will contact you within 24 hours to verify your school settlement account and issue staff logins.
+    </div>
+    {% endif %}
+
+    {% if form_error %}
+    <div class="err-box">{{ form_error }}</div>
+    {% endif %}
+
+    <form method="post">
+        {% csrf_token %}
+        <label for="school_name">School Name</label>
+        <input type="text" id="school_name" name="school_name" value="{{ form_data.school_name|default:'' }}" placeholder="e.g. Aringa Secondary School" required>
+
+        <label for="district">District</label>
+        <select id="district" name="district" required>
+            <option value="">-- Select District --</option>
+            {% for d in districts %}
+            <option value="{{ d }}" {% if form_data.district == d %}selected{% endif %}>{{ d }}</option>
+            {% endfor %}
+        </select>
+
+        <label for="approx_students">Estimated Student Population</label>
+        <select id="approx_students" name="approx_students" required>
+            {% for val, label in student_bands %}
+            <option value="{{ val }}" {% if form_data.approx_students == val %}selected{% endif %}>{{ label }}</option>
+            {% endfor %}
+        </select>
+
+        <label for="contact_name">Contact Person Full Name</label>
+        <input type="text" id="contact_name" name="contact_name" value="{{ form_data.contact_name|default:'' }}" placeholder="e.g. Mr. Okello Moses" required>
+
+        <label for="contact_role">Role at School</label>
+        <select id="contact_role" name="contact_role" required>
+            <option value="School Bursar">School Bursar</option>
+            <option value="Headteacher / Principal">Headteacher / Principal</option>
+            <option value="School Director">School Director</option>
+            <option value="Canteen Manager">Canteen Manager</option>
+        </select>
+
+        <label for="contact_phone">Uganda Phone / WhatsApp Number</label>
+        <input type="tel" id="contact_phone" name="contact_phone" value="{{ form_data.contact_phone|default:'' }}" placeholder="e.g. 0772123456" required>
+
+        <label for="contact_email">Official Email (Optional)</label>
+        <input type="email" id="contact_email" name="contact_email" value="{{ form_data.contact_email|default:'' }}" placeholder="e.g. bursar@school.ac.ug">
+
+        <label for="notes">Additional Notes (Optional)</label>
+        <textarea id="notes" name="notes" rows="3" placeholder="e.g. Looking to start next term with 450 boarding students.">{{ form_data.notes|default:'' }}</textarea>
+
+        <button type="submit" class="submit-btn">Submit School Partnership Request →</button>
+    </form>
+</div>
+
+<script>
+const THEME_KEY = "canteenpay_theme";
+function applyTheme(dark) {
+    document.documentElement.setAttribute("data-theme", dark ? "dark" : "light");
+    document.getElementById("themeToggle").textContent = dark ? "☀️ Light" : "🌙 Dark";
+    try { localStorage.setItem(THEME_KEY, dark ? "dark" : "light"); } catch (_) {}
+}
+function toggleTheme() { applyTheme(document.documentElement.getAttribute("data-theme") !== "dark"); }
+(function () {
+    let saved = null;
+    try { saved = localStorage.getItem(THEME_KEY); } catch (_) {}
+    const prefersDark = saved ? saved === "dark" : window.matchMedia("(prefers-color-scheme: dark)").matches;
+    applyTheme(prefersDark);
+})();
+</script>
+</body>
+</html>

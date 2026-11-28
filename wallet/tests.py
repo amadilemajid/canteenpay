@@ -1255,6 +1255,114 @@ class CanteenPayProductionTests(TestCase):
         self.assertIn("4. Privacy Policy", pol_html)
         self.assertIn("themeToggle", pol_html)
 
+    def test_dropdowns_school_onboarding_password_reset_parent_balance_and_bursar_refund(self):
+        """Verifies dropdown presets, school onboarding, password reset, parent mini-statement, and bursar inline refunds."""
+        from django.core import mail
+        from wallet.models import SchoolOnboardingRequest
+
+        # 1. Standardized dropdowns on Parent & POS pages
+        parent_html = self.client.get("/").content.decode()
+        for snippet in ("amountPreset", "networkSelect", "/parent/balance/", "/schools/register/"):
+            self.assertIn(snippet, parent_html)
+
+        self.client.login(username="canteen_staff", password="StrongPassword123!")
+        pos_html = self.client.get("/pos/").content.decode()
+        for snippet in ("itemPreset", "amountPreset", "/staff/password-change/"):
+            self.assertIn(snippet, pos_html)
+
+        # 2. School onboarding request validates Uganda phone and saves record
+        bad_reg = self.client.post(
+            "/schools/register/",
+            {
+                "school_name": "Yumbe High",
+                "district": "Yumbe",
+                "approx_students": "350",
+                "contact_name": "Bursar Ali",
+                "contact_role": "School Bursar",
+                "contact_phone": "07712",
+            },
+        )
+        self.assertEqual(bad_reg.status_code, 200)
+        self.assertIn("too short", bad_reg.content.decode().lower())
+        self.assertEqual(SchoolOnboardingRequest.objects.count(), 0)
+
+        ok_reg = self.client.post(
+            "/schools/register/",
+            {
+                "school_name": "Yumbe High",
+                "district": "Yumbe",
+                "approx_students": "750",
+                "contact_name": "Bursar Ali",
+                "contact_role": "School Bursar",
+                "contact_phone": "0772999888",
+                "contact_email": "bursar@yumbehigh.ug",
+            },
+        )
+        self.assertEqual(ok_reg.status_code, 200)
+        self.assertIn("Application received", ok_reg.content.decode())
+        req_obj = SchoolOnboardingRequest.objects.get(school_name="Yumbe High")
+        self.assertEqual(req_obj.contact_phone, "256772999888")
+
+        # 3. Password reset email flow
+        self.bursar.email = "bursar@khs.ug"
+        self.bursar.save(update_fields=["email"])
+        with override_settings(EMAIL_BACKEND="django.core.mail.backends.locmem.EmailBackend"):
+            reset_res = self.client.post("/staff/password-reset/", {"email": "bursar@khs.ug"})
+            self.assertRedirects(reset_res, "/staff/password-reset/done/")
+            self.assertEqual(len(mail.outbox), 1)
+            self.assertIn("/staff/reset/", mail.outbox[0].body)
+
+        # 4. Parent balance & mini-statement lookup (requires valid PIN)
+        bal_page = self.client.get("/parent/balance/")
+        self.assertEqual(bal_page.status_code, 200)
+        bad_pin = self.client.post(
+            "/api/parent/balance/",
+            data=json.dumps({"student_reg_no": self.student.student_reg_no, "pin": "0000"}),
+            content_type="application/json",
+        )
+        self.assertEqual(bad_pin.status_code, 401)
+
+        order = CanteenOrder.objects.create(
+            student=self.student,
+            attendant=self.attendant,
+            amount=Decimal("1500.00"),
+            items_note="Chapati",
+        )
+        self.student.wallet_balance = Decimal("8500.00")
+        self.student.save(update_fields=["wallet_balance"])
+
+        ok_bal = self.client.post(
+            "/api/parent/balance/",
+            data=json.dumps({"student_reg_no": self.student.student_reg_no, "pin": "1234"}),
+            content_type="application/json",
+        )
+        self.assertEqual(ok_bal.status_code, 200)
+        bal_json = ok_bal.json()
+        self.assertEqual(Decimal(bal_json["wallet_balance"]), Decimal("8500.00"))
+        self.assertTrue(any(a["title"] == "Chapati" for a in bal_json["recent_activity"]))
+
+        # 5. Bursar report Top-Selling Items & in-page audited Refund action
+        self.client.login(username="school_bursar", password="StrongPassword123!")
+        rep_before = self.client.get("/report/daily/").content.decode()
+        self.assertIn("Top-Selling Canteen Items", rep_before)
+        self.assertIn("Chapati", rep_before)
+
+        refund_res = self.client.post(
+            "/report/daily/",
+            {
+                "action": "refund_order",
+                "order_id": str(order.id),
+                "refund_reason": "Wrong scan",
+                "report_date": timezone.localdate().strftime("%Y-%m-%d"),
+            },
+            follow=True,
+        )
+        self.assertEqual(refund_res.status_code, 200)
+        self.assertIn("Refunded UGX 1,500", refund_res.content.decode())
+        self.student.refresh_from_db()
+        self.assertEqual(self.student.wallet_balance, Decimal("10000.00"))
+        self.assertTrue(CanteenRefund.objects.filter(order=order, refunded_by=self.bursar).exists())
+
 
 class OnCommitSMSTests(TransactionTestCase):
     @patch("wallet.aggregator_service.send_topup_receipt_sms")

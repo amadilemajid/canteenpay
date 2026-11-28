@@ -13,6 +13,7 @@ from .models import (
     CanteenOrder,
     CanteenRefund,
     School,
+    SchoolOnboardingRequest,
     Student,
     WalletTopUp,
 )
@@ -414,3 +415,20 @@ class BursarCashTopUpAdmin(admin.ModelAdmin):
 
     def has_delete_permission(self, request, obj=None):
         return False
+
+
+@admin.register(SchoolOnboardingRequest)
+class SchoolOnboardingRequestAdmin(admin.ModelAdmin):
+    list_display = (
+        "school_name",
+        "district",
+        "approx_students",
+        "contact_name",
+        "contact_role",
+        "contact_phone",
+        "status",
+        "created_at",
+    )
+    list_filter = ("status", "district")
+    search_fields = ("school_name", "district", "contact_name", "contact_phone", "contact_email")
+    readonly_fields = ("created_at",)

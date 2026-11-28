@@ -296,6 +296,12 @@
         }
         .recent-row .meta { color: var(--muted); font-size: 0.76rem; margin-top: 2px; }
         .recent-row .amt  { font-weight: 800; color: #10b981; white-space: nowrap; font-family: monospace; font-size: 0.92rem; }
+        select.pos-select {
+            width: 100%; padding: 11px 12px; border-radius: 8px; margin-bottom: 8px;
+            border: 1px solid var(--input-brd); background: var(--input-bg);
+            color: var(--input-txt); font-size: 0.98rem; font-weight: 600;
+        }
+        select.pos-select:focus { outline: 2px solid #10b981; border-color: #10b981; }
     </style>
 </head>
 <body>
@@ -313,6 +319,7 @@
         <a href="{% url 'bursar_daily_report' %}">📊 Daily Report</a>
         <a href="{% url 'daily_topup_noticeboard' %}">📋 Top-Up Board</a>
         <a href="{% url 'wallet_cards_page' %}">🪪 Wallet Cards</a>
+        <a href="{% url 'password_change' %}">🔑 Password</a>
         <button id="installPwaBtn" type="button" onclick="installPosApp()">📲 Install App</button>
     </nav>
     <div class="bar-actions">
@@ -350,7 +357,46 @@
 
     <div id="studentInfo" class="info-card" role="status" aria-live="polite"></div>
 
+    <div class="label-row">
+        <label for="itemsNote">Items Bought (Standard Dropdown or Custom)</label>
+        <span id="itemsCounter" class="char-counter">0 / 255</span>
+    </div>
+    <select id="itemPreset" class="pos-select" onchange="onItemPresetChange()">
+        <option value="">-- Select standard canteen item (auto-fills price) --</option>
+        <option value="Rolex" data-price="2000">Rolex — UGX 2,000</option>
+        <option value="Chapati" data-price="1000">Chapati — UGX 1,000</option>
+        <option value="Soda (300ml)" data-price="2000">Soda (300ml) — UGX 2,000</option>
+        <option value="Mandazi (Pair)" data-price="1000">Mandazi (Pair) — UGX 1,000</option>
+        <option value="Mandazi (Single)" data-price="500">Mandazi (Single) — UGX 500</option>
+        <option value="Tea / Porridge" data-price="1000">Tea / Porridge — UGX 1,000</option>
+        <option value="Bottled Water" data-price="1000">Bottled Water — UGX 1,000</option>
+        <option value="Snacks / Biscuits" data-price="1500">Snacks / Biscuits — UGX 1,500</option>
+        <option value="Lunch / Hot Meal" data-price="5000">Lunch / Hot Meal — UGX 5,000</option>
+        <option value="__custom__">Other / Multiple Items (type below)…</option>
+    </select>
+    <input type="text" id="itemsNote" maxlength="255" placeholder="e.g. Chapati + Soda" autocomplete="off">
+    <div class="chip-row" aria-label="Quick items">
+        <button type="button" class="chip-btn" onclick="quickAddItem('Chapati')">+ Chapati</button>
+        <button type="button" class="chip-btn" onclick="quickAddItem('Soda')">+ Soda</button>
+        <button type="button" class="chip-btn" onclick="quickAddItem('Mandazi')">+ Mandazi</button>
+        <button type="button" class="chip-btn" onclick="quickAddItem('Rolex')">+ Rolex</button>
+        <button type="button" class="chip-btn" onclick="quickAddItem('Tea')">+ Tea</button>
+        <button type="button" class="chip-btn" onclick="quickAddItem('Water')">+ Water</button>
+    </div>
+
     <label for="orderAmount">Purchase Amount (UGX)</label>
+    <select id="amountPreset" class="pos-select" onchange="onAmountPresetChange()">
+        <option value="">-- Quick amount dropdown (or type below) --</option>
+        <option value="500">UGX 500</option>
+        <option value="1000">UGX 1,000</option>
+        <option value="1500">UGX 1,500</option>
+        <option value="2000">UGX 2,000</option>
+        <option value="2500">UGX 2,500</option>
+        <option value="3000">UGX 3,000</option>
+        <option value="5000">UGX 5,000</option>
+        <option value="10000">UGX 10,000</option>
+        <option value="__custom__">Other custom amount…</option>
+    </select>
     <!-- inputmode="numeric" opens the numeric keypad directly on Android; text allows live comma formatting -->
     <input type="text" id="orderAmount" placeholder="e.g. 2,500"
            inputmode="numeric" pattern="[0-9,]*" autocomplete="off">
@@ -360,20 +406,6 @@
         <button type="button" class="chip-btn" onclick="quickSetAmount(2000)">2,000</button>
         <button type="button" class="chip-btn" onclick="quickSetAmount(3000)">3,000</button>
         <button type="button" class="chip-btn" onclick="quickSetAmount(5000)">5,000</button>
-    </div>
-
-    <div class="label-row">
-        <label for="itemsNote">Items Bought (Optional)</label>
-        <span id="itemsCounter" class="char-counter">0 / 255</span>
-    </div>
-    <input type="text" id="itemsNote" maxlength="255" placeholder="e.g. Chapati + Soda" autocomplete="off">
-    <div class="chip-row" aria-label="Quick items">
-        <button type="button" class="chip-btn" onclick="quickAddItem('Chapati')">+ Chapati</button>
-        <button type="button" class="chip-btn" onclick="quickAddItem('Soda')">+ Soda</button>
-        <button type="button" class="chip-btn" onclick="quickAddItem('Mandazi')">+ Mandazi</button>
-        <button type="button" class="chip-btn" onclick="quickAddItem('Rolex')">+ Rolex</button>
-        <button type="button" class="chip-btn" onclick="quickAddItem('Tea')">+ Tea</button>
-        <button type="button" class="chip-btn" onclick="quickAddItem('Water')">+ Water</button>
     </div>
 
     <!-- Confirmation banner — shown as soon as student + amount are known -->
@@ -809,9 +841,58 @@
     scannedId.addEventListener("keydown", (e) => {
         if (e.key === "Enter") { e.preventDefault(); fetchStudentInfo(); }
     });
+    function syncAmountDropdown(numVal) {
+        const sel = document.getElementById("amountPreset");
+        if (!sel) return;
+        const strVal = isNaN(numVal) || numVal <= 0 ? "" : String(numVal);
+        const match = Array.from(sel.options).some(o => o.value === strVal);
+        sel.value = match ? strVal : (strVal ? "__custom__" : "");
+    }
+
+    function onItemPresetChange() {
+        cancelAutoReset();
+        const sel = document.getElementById("itemPreset");
+        const opt = sel.options[sel.selectedIndex];
+        if (!sel.value) return;
+        if (sel.value === "__custom__") {
+            itemsNote.focus();
+            return;
+        }
+        itemsNote.value = sel.value;
+        const len = itemsNote.value.length;
+        itemsCounter.textContent = `${len} / 255`;
+        itemsCounter.classList.toggle("warn", len >= 220);
+
+        const price = opt.getAttribute("data-price");
+        if (price) {
+            orderAmount.value = Number(price).toLocaleString("en-UG");
+            syncAmountDropdown(Number(price));
+            resetCheckoutKey();
+            updateConfirmChargeBanner();
+            document.getElementById("studentPin").focus();
+        }
+    }
+
+    function onAmountPresetChange() {
+        cancelAutoReset();
+        const sel = document.getElementById("amountPreset");
+        if (!sel.value) {
+            orderAmount.value = "";
+        } else if (sel.value === "__custom__") {
+            orderAmount.focus();
+            return;
+        } else {
+            orderAmount.value = Number(sel.value).toLocaleString("en-UG");
+            document.getElementById("studentPin").focus();
+        }
+        resetCheckoutKey();
+        updateConfirmChargeBanner();
+    }
+
     orderAmount.addEventListener("input", () => {
         cancelAutoReset();
         formatOrderAmountInput();
+        syncAmountDropdown(rawOrderAmount());
         resetCheckoutKey();
         updateConfirmChargeBanner();
     });
@@ -830,6 +911,7 @@
     function quickSetAmount(val) {
         cancelAutoReset();
         orderAmount.value = Number(val).toLocaleString("en-UG");
+        syncAmountDropdown(Number(val));
         resetCheckoutKey();
         updateConfirmChargeBanner();
         document.getElementById("studentPin").focus();
@@ -961,6 +1043,8 @@
         scannedId.value = "";
         orderAmount.value = "";
         itemsNote.value = "";
+        document.getElementById("itemPreset").value = "";
+        document.getElementById("amountPreset").value = "";
         itemsCounter.textContent = "0 / 255";
         itemsCounter.classList.remove("warn");
         document.getElementById("studentPin").value = "";
@@ -1118,6 +1202,8 @@
                 }
                 orderAmount.value = "";
                 itemsNote.value = "";
+                document.getElementById("itemPreset").value = "";
+                document.getElementById("amountPreset").value = "";
                 itemsCounter.textContent = "0 / 255";
                 itemsCounter.classList.remove("warn");
                 document.getElementById("studentPin").value = "";

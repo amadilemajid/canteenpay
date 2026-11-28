@@ -36,16 +36,30 @@
         .card { max-width: 460px; margin: 0 auto; background: var(--card); padding: 24px; border-radius: 12px; box-shadow: 0 4px 12px rgba(0,0,0,0.08); }
         h2 { margin-top: 0; font-size: 1.35rem; }
         label { display: block; font-weight: 600; margin: 14px 0 6px; font-size: 0.9rem; }
-        input {
+        input, select {
             width: 100%; padding: 12px; border: 1px solid var(--border); border-radius: 8px;
             font-size: 1rem; background: var(--input-bg); color: var(--input-txt);
         }
-        input:focus { outline: 2px solid #10b981; border-color: #10b981; }
+        input:focus, select:focus { outline: 2px solid #10b981; border-color: #10b981; }
         button.submit-btn {
             width: 100%; padding: 13px; margin-top: 18px; border: none; border-radius: 8px;
             background: #059669; color: #fff; font-weight: 700; font-size: 1rem; cursor: pointer;
         }
         button.submit-btn:disabled { opacity: 0.6; cursor: not-allowed; }
+        .controls-box {
+            margin-top: 16px; padding-top: 14px; border-top: 1px dashed var(--pill-brd);
+        }
+        .controls-box h3 { margin: 0 0 8px; font-size: 0.98rem; }
+        .freeze-badge {
+            display: inline-block; padding: 4px 10px; border-radius: 999px; font-size: 0.78rem;
+            font-weight: 800; margin-top: 6px;
+        }
+        .freeze-on { background: #fee2e2; color: #991b1b; border: 1px solid #ef4444; }
+        .freeze-off { background: #d1fae5; color: #065f46; border: 1px solid #10b981; }
+        .ok-box {
+            display: none; margin-top: 10px; padding: 10px; border-radius: 8px;
+            background: #d1fae5; color: #065f46; border: 1px solid #10b981; font-weight: 600; font-size: 0.86rem;
+        }
         .err-box {
             display: none; margin-top: 14px; padding: 11px; border-radius: 8px;
             background: #fef2f2; color: #991b1b; border: 1px solid #f87171; font-weight: 600; font-size: 0.9rem;
@@ -97,7 +111,42 @@
         <div id="studentTitle" style="font-weight:700; font-size:1rem;"></div>
         <div class="bal-num" id="walletBal"></div>
         <div id="limitLine" style="font-size:0.84rem; font-weight:600;"></div>
+        <div id="freezeBadge" class="freeze-badge freeze-off">Card Status: Active</div>
         <div class="activity-list" id="activityList"></div>
+
+        <div class="controls-box" id="parentControlsBox">
+            <h3>Parent Safety &amp; Spending Controls</h3>
+            <label for="dailyLimitSelect">Daily Spending Limit (UGX)</label>
+            <select id="dailyLimitSelect">
+                <option value="">School Default</option>
+                <option value="2000">UGX 2,000 / day</option>
+                <option value="3000">UGX 3,000 / day</option>
+                <option value="5000">UGX 5,000 / day</option>
+                <option value="10000">UGX 10,000 / day</option>
+                <option value="20000">UGX 20,000 / day</option>
+            </select>
+
+            <label for="lowBalSelect">Low-Balance SMS Alert Threshold</label>
+            <select id="lowBalSelect">
+                <option value="">School Default</option>
+                <option value="1000">Below UGX 1,000</option>
+                <option value="2000">Below UGX 2,000</option>
+                <option value="5000">Below UGX 5,000</option>
+                <option value="0">Disable Low-Balance Alerts</option>
+            </select>
+
+            <label for="freezeSelect">Lost Card Protection</label>
+            <select id="freezeSelect">
+                <option value="false">Active — Card can be used at canteen</option>
+                <option value="true">Frozen — Temporarily block canteen spending</option>
+            </select>
+
+            <label for="newPinInput">Change 4-Digit Student PIN (optional)</label>
+            <input type="password" id="newPinInput" maxlength="4" inputmode="numeric" placeholder="Leave blank to keep current PIN" autocomplete="new-password">
+
+            <button type="button" id="saveSettingsBtn" class="submit-btn" style="background:#2563eb; margin-top:12px;" onclick="saveParentSettings()">Save Controls</button>
+            <div id="settingsOkBox" class="ok-box"></div>
+        </div>
     </div>
 </div>
 
@@ -131,6 +180,32 @@ function getCookie(name) {
     return v || "";
 }
 
+let activeSession = { regNo: "", pin: "" };
+
+function syncSelectValue(selectId, customVal) {
+    const sel = document.getElementById(selectId);
+    if (!sel) return;
+    if (customVal === null || customVal === undefined) {
+        sel.value = "";
+        return;
+    }
+    const target = String(customVal);
+    if (!Array.from(sel.options).some(o => o.value === target)) {
+        const opt = document.createElement("option");
+        opt.value = target;
+        opt.textContent = target === "0" ? "Off" : `UGX ${Number(target).toLocaleString("en-UG")}`;
+        sel.appendChild(opt);
+    }
+    sel.value = target;
+}
+
+function updateFreezeBadge(isFrozen) {
+    const badge = document.getElementById("freezeBadge");
+    badge.className = `freeze-badge ${isFrozen ? "freeze-on" : "freeze-off"}`;
+    badge.textContent = isFrozen ? "Card Status: FROZEN (Spending Blocked)" : "Card Status: Active";
+    document.getElementById("freezeSelect").value = isFrozen ? "true" : "false";
+}
+
 async function checkWalletBalance() {
     const regNo = document.getElementById("regNo").value.trim();
     const pin = document.getElementById("pin").value.trim();
@@ -140,6 +215,7 @@ async function checkWalletBalance() {
 
     errBox.style.display = "none";
     summaryBox.style.display = "none";
+    document.getElementById("settingsOkBox").style.display = "none";
 
     if (!regNo || !pin) {
         errBox.textContent = "Please enter both your child's CanteenPay code and 4-digit PIN.";
@@ -161,11 +237,16 @@ async function checkWalletBalance() {
             errBox.style.display = "block";
             return;
         }
+        activeSession = { regNo: data.student_reg_no || regNo, pin };
         const cls = data.class_stream ? ` (${data.class_stream})` : "";
         document.getElementById("studentTitle").textContent = `${data.student_name}${cls} · ${data.school}`;
         document.getElementById("walletBal").textContent = `UGX ${Number(data.wallet_balance).toLocaleString("en-UG")}`;
         document.getElementById("limitLine").textContent =
             `Daily Cap: UGX ${Number(data.daily_limit).toLocaleString("en-UG")} · Remaining Today: UGX ${Number(data.remaining_daily_limit).toLocaleString("en-UG")}`;
+
+        syncSelectValue("dailyLimitSelect", data.daily_spend_limit_custom);
+        syncSelectValue("lowBalSelect", data.low_balance_threshold_custom);
+        updateFreezeBadge(Boolean(data.parent_frozen));
 
         const listEl = document.getElementById("activityList");
         listEl.innerHTML = "";
@@ -203,6 +284,63 @@ async function checkWalletBalance() {
     } finally {
         btn.disabled = false;
         btn.textContent = "View Wallet Balance & Activity";
+    }
+}
+
+async function saveParentSettings() {
+    const errBox = document.getElementById("errBox");
+    const okBox = document.getElementById("settingsOkBox");
+    const btn = document.getElementById("saveSettingsBtn");
+    errBox.style.display = "none";
+    okBox.style.display = "none";
+
+    const currentPin = document.getElementById("pin").value.trim() || activeSession.pin;
+    const regNo = activeSession.regNo || document.getElementById("regNo").value.trim();
+    const newPin = document.getElementById("newPinInput").value.trim();
+    if (!regNo || !currentPin) {
+        errBox.textContent = "Enter your current 4-digit PIN above to save settings.";
+        errBox.style.display = "block";
+        return;
+    }
+
+    btn.disabled = true;
+    btn.textContent = "Saving...";
+    try {
+        const res = await fetch("/api/parent/settings/", {
+            method: "POST",
+            headers: { "Content-Type": "application/json", "X-CSRFToken": getCookie("csrftoken") },
+            body: JSON.stringify({
+                student_reg_no: regNo,
+                pin: currentPin,
+                daily_spend_limit: document.getElementById("dailyLimitSelect").value,
+                low_balance_threshold: document.getElementById("lowBalSelect").value,
+                parent_frozen: document.getElementById("freezeSelect").value === "true",
+                new_pin: newPin
+            })
+        });
+        const data = await res.json();
+        if (!res.ok) {
+            errBox.textContent = data.error || "Could not save wallet settings.";
+            errBox.style.display = "block";
+            return;
+        }
+        if (data.pin_changed && newPin) {
+            activeSession.pin = newPin;
+            document.getElementById("newPinInput").value = "";
+        }
+        document.getElementById("limitLine").textContent =
+            `Daily Cap: UGX ${Number(data.daily_limit).toLocaleString("en-UG")} · Remaining Today: UGX ${Number(data.remaining_daily_limit).toLocaleString("en-UG")}`;
+        updateFreezeBadge(Boolean(data.parent_frozen));
+        okBox.textContent = data.pin_changed
+            ? "Settings and new 4-digit PIN saved!"
+            : "Wallet safety controls saved!";
+        okBox.style.display = "block";
+    } catch (_) {
+        errBox.textContent = "Network error while saving settings.";
+        errBox.style.display = "block";
+    } finally {
+        btn.disabled = false;
+        btn.textContent = "Save Controls";
     }
 }
 </script>

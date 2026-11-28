@@ -1,24 +1,24 @@
-import csv
-import io
-import secrets
-
 from django import forms
 from django.contrib import admin, messages
+from django.contrib.auth.admin import UserAdmin as BaseUserAdmin
 from django.contrib.auth.hashers import make_password
+from django.contrib.auth.models import User
 from django.shortcuts import render
 from django.urls import path
 
+from .import_service import build_pin_slip, import_students_csv, mint_pin
 from .models import (
     BursarCashTopUp,
     CanteenOrder,
     CanteenRefund,
     School,
     SchoolOnboardingRequest,
+    StaffProfile,
     Student,
     WalletTopUp,
 )
 from .sms_service import is_valid_phone, send_welcome_pin_sms
-from .views import wallet_card_pages
+from .views import _user_scoped_school, wallet_card_pages
 
 
 class CsvImportForm(forms.Form):
@@ -51,44 +51,6 @@ class StudentAdminForm(forms.ModelForm):
         if commit:
             instance.save()
         return instance
-
-
-def _mint_pin():
-    return f"{secrets.randbelow(10000):04d}"
-
-
-def _format_4digit_pin(raw_pin: str) -> str:
-    """Zero-pads numeric PINs up to 4 digits (e.g. Excel-stripped '42' -> '0042')."""
-    cleaned = (raw_pin or "").strip()
-    if cleaned.isdigit() and len(cleaned) <= 4:
-        return cleaned.zfill(4)
-    return cleaned
-
-
-def _build_pin_slip(student: Student, pin: str) -> dict:
-    return {
-        "school_name": student.school.name,
-        "full_name": student.full_name,
-        "class_stream": student.class_stream,
-        "student_reg_no": student.student_reg_no,
-        "pin": _format_4digit_pin(pin),
-    }
-
-
-def _normalized_row(row):
-    return {
-        (key or "").strip().lower(): (value or "").strip()
-        for key, value in row.items()
-        if key
-    }
-
-
-def _row_value(normalized, *keys):
-    for key in keys:
-        value = normalized.get(key, "")
-        if value:
-            return value
-    return ""
 
 
 @admin.register(School)
@@ -135,11 +97,21 @@ class StudentAdmin(admin.ModelAdmin):
         ]
         return custom_urls + urls
 
+    def get_queryset(self, request):
+        qs = super().get_queryset(request)
+        scoped_school = _user_scoped_school(request.user)
+        if scoped_school is not None:
+            return qs.filter(school=scoped_school)
+        return qs
+
     def import_csv(self, request):
+        scoped_school = _user_scoped_school(request.user)
         if request.method == "POST":
             form = CsvImportForm(request.POST, request.FILES)
+            if scoped_school is not None:
+                form.fields["school"].queryset = School.objects.filter(pk=scoped_school.pk)
             if form.is_valid():
-                school = form.cleaned_data["school"]
+                school = scoped_school or form.cleaned_data["school"]
                 try:
                     decoded_file = request.FILES["csv_file"].read().decode("utf-8-sig")
                 except UnicodeDecodeError:
@@ -158,16 +130,13 @@ class StudentAdmin(admin.ModelAdmin):
                         },
                     )
 
-                reader = csv.DictReader(io.StringIO(decoded_file))
-                fieldnames = [
-                    (name or "").strip().lower() for name in (reader.fieldnames or [])
-                ]
-                has_name = "full_name" in fieldnames or "name" in fieldnames
-                has_class = "class_stream" in fieldnames or "class" in fieldnames
-                if not has_name or not has_class:
+                result = import_students_csv(
+                    school, decoded_file, send_sms_fn=send_welcome_pin_sms
+                )
+                if result["header_error"]:
                     self.message_user(
                         request,
-                        "CSV must include full_name and class_stream columns. parent_phone and pin are optional.",
+                        result["header_error"],
                         level=messages.ERROR,
                     )
                     return render(
@@ -180,82 +149,20 @@ class StudentAdmin(admin.ModelAdmin):
                         },
                     )
 
-                created_count = 0
-                updated_count = 0
-                slips = []
-                errors = []
-
-                for row in reader:
-                    line_no = reader.line_num
-                    try:
-                        normalized = _normalized_row(row)
-                        if not any(normalized.values()):
-                            continue
-
-                        full_name = _row_value(normalized, "full_name", "name")
-                        class_stream = _row_value(normalized, "class_stream", "class")
-                        parent_phone = _row_value(
-                            normalized, "parent_phone", "phone", "parent_mobile"
-                        )
-                        raw_pin = _row_value(normalized, "pin")
-                        reg_no = _row_value(normalized, "student_reg_no").upper()
-
-                        if not full_name or not class_stream:
-                            raise ValueError("full_name and class_stream are required.")
-
-                        student = None
-                        if reg_no:
-                            student = Student.objects.filter(
-                                student_reg_no__iexact=reg_no
-                            ).first()
-                        if student is None:
-                            student = Student.objects.filter(
-                                school=school,
-                                full_name__iexact=full_name,
-                                class_stream__iexact=class_stream,
-                            ).first()
-
-                        if student is not None:
-                            if is_valid_phone(parent_phone) and student.parent_phone != parent_phone:
-                                student.parent_phone = parent_phone
-                                student.save(update_fields=["parent_phone"])
-                            updated_count += 1
-                            continue
-
-                        minted_pin = _format_4digit_pin(raw_pin) if raw_pin else _mint_pin()
-                        student = Student(
-                            school=school,
-                            student_reg_no=reg_no,
-                            full_name=full_name,
-                            class_stream=class_stream,
-                            parent_phone=parent_phone if is_valid_phone(parent_phone) else "",
-                        )
-                        student.set_pin(minted_pin)
-                        student.save()
-                        created_count += 1
-                        slips.append(_build_pin_slip(student, minted_pin))
-                        if is_valid_phone(student.parent_phone):
-                            send_welcome_pin_sms(
-                                parent_phone=student.parent_phone,
-                                student_name=student.full_name,
-                                class_stream=student.class_stream,
-                                code=student.student_reg_no,
-                                pin=minted_pin,
-                            )
-                    except Exception as exc:
-                        errors.append({"line": line_no, "message": str(exc)})
-
                 return self._render_pin_slips(
                     request,
                     title="One-Time Take-Home PIN Slips",
-                    slips=slips,
-                    errors=errors,
-                    created_count=created_count,
-                    updated_count=updated_count,
+                    slips=result["slips"],
+                    errors=result["errors"],
+                    created_count=result["created_count"],
+                    updated_count=result["updated_count"],
                     single=False,
                 )
         else:
             form = CsvImportForm()
+            if scoped_school is not None:
+                form.fields["school"].queryset = School.objects.filter(pk=scoped_school.pk)
+                form.fields["school"].initial = scoped_school
 
         context = {
             **self.admin_site.each_context(request),
@@ -302,7 +209,7 @@ class StudentAdmin(admin.ModelAdmin):
     def reset_pin_and_print_slip(self, request, queryset):
         slips = []
         for student in queryset.select_related("school"):
-            minted_pin = _mint_pin()
+            minted_pin = mint_pin()
             student.set_pin(minted_pin)
             student.failed_pin_attempts = 0
             student.pin_locked_until = None
@@ -317,7 +224,7 @@ class StudentAdmin(admin.ModelAdmin):
                     code=student.student_reg_no,
                     pin=minted_pin,
                 )
-            slips.append(_build_pin_slip(student, minted_pin))
+            slips.append(build_pin_slip(student, minted_pin))
 
         return self._render_pin_slips(
             request,
@@ -432,3 +339,28 @@ class SchoolOnboardingRequestAdmin(admin.ModelAdmin):
     list_filter = ("status", "district")
     search_fields = ("school_name", "district", "contact_name", "contact_phone", "contact_email")
     readonly_fields = ("created_at",)
+
+
+@admin.register(StaffProfile)
+class StaffProfileAdmin(admin.ModelAdmin):
+    list_display = ("user", "school", "role", "created_at")
+    list_filter = ("role", "school")
+    search_fields = ("user__username", "school__name", "school__code_prefix")
+    readonly_fields = ("created_at",)
+
+
+class StaffProfileInline(admin.StackedInline):
+    model = StaffProfile
+    can_delete = True
+    extra = 0
+
+
+try:
+    admin.site.unregister(User)
+except admin.sites.NotRegistered:
+    pass
+
+
+@admin.register(User)
+class CanteenPayUserAdmin(BaseUserAdmin):
+    inlines = (StaffProfileInline,)

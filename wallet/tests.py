@@ -1505,3 +1505,233 @@ class OnCommitSMSTests(TransactionTestCase):
         self.assertIsNone(
             sms_service.send_refund_receipt_sms("-", "Peter Drani", "1000", "5000", "Mistake", "ORD1")
         )
+
+
+class NextGenFintechEnhancementTests(TestCase):
+    def setUp(self):
+        self.client = Client()
+        self.school_a = School.objects.create(
+            name="Kampala Model School",
+            code_prefix="KMS",
+            subaccount_id="RS_KMS",
+            daily_spend_limit=Decimal("5000.00"),
+            low_balance_threshold=Decimal("2000.00"),
+        )
+        self.school_b = School.objects.create(
+            name="Arua Academy",
+            code_prefix="ARA",
+            subaccount_id="RS_ARA",
+            daily_spend_limit=Decimal("6000.00"),
+            low_balance_threshold=Decimal("2000.00"),
+        )
+        self.student_a = Student.objects.create(
+            school=self.school_a,
+            student_reg_no="KMS-0001",
+            full_name="Amina Hassan",
+            class_stream="S.2 A",
+            parent_phone="256772111222",
+            wallet_balance=Decimal("4000.00"),
+        )
+        self.student_a.set_pin("1234")
+        self.student_a.save()
+
+        self.student_b = Student.objects.create(
+            school=self.school_b,
+            student_reg_no="ARA-0001",
+            full_name="John Okello",
+            class_stream="S.3 B",
+            parent_phone="256752333444",
+            wallet_balance=Decimal("8000.00"),
+        )
+        self.student_b.set_pin("5678")
+        self.student_b.save()
+
+    @patch("wallet.views.send_low_balance_alert_sms")
+    @patch("wallet.views.send_canteen_purchase_sms")
+    def test_low_balance_sms_triggers_once_and_resets_after_topup(self, mock_sale_sms, mock_low_sms):
+        from wallet.models import StaffProfile
+
+        attendant_a = User.objects.create_user(username="kms_pos", password="StrongPassword123!")
+        StaffProfile.objects.create(user=attendant_a, school=self.school_a, role="CANTEEN")
+        self.client.login(username="kms_pos", password="StrongPassword123!")
+
+        with self.captureOnCommitCallbacks(execute=True):
+            res1 = self.client.post(
+                "/api/canteen/checkout/",
+                data=json.dumps({
+                    "student_reg_no": "KMS-0001",
+                    "amount": 2500,
+                    "items_note": "Lunch",
+                    "pin": "1234",
+                }),
+                content_type="application/json",
+            )
+        self.assertEqual(res1.status_code, 200)
+        self.assertTrue(res1.json()["low_balance_alert"])
+        mock_low_sms.assert_called_once()
+        self.student_a.refresh_from_db()
+        self.assertEqual(self.student_a.wallet_balance, Decimal("1500.00"))
+        self.assertTrue(self.student_a.low_balance_alert_sent)
+
+        # Second purchase while still low must not spam parent again
+        with self.captureOnCommitCallbacks(execute=True):
+            res2 = self.client.post(
+                "/api/canteen/checkout/",
+                data=json.dumps({
+                    "student_reg_no": "KMS-0001",
+                    "amount": 500,
+                    "items_note": "Water",
+                    "pin": "1234",
+                }),
+                content_type="application/json",
+            )
+        self.assertEqual(res2.status_code, 200)
+        self.assertFalse(res2.json()["low_balance_alert"])
+        mock_low_sms.assert_called_once()
+
+        # Bursar cash deposit above threshold clears low_balance_alert_sent flag
+        BursarCashTopUp.objects.create(student=self.student_a, amount=Decimal("5000.00"))
+        self.student_a.refresh_from_db()
+        self.assertFalse(self.student_a.low_balance_alert_sent)
+
+    def test_multi_school_isolation_for_pos_and_bursar(self):
+        from wallet.models import StaffProfile
+
+        attendant_a = User.objects.create_user(username="att_a", password="StrongPassword123!")
+        StaffProfile.objects.create(user=attendant_a, school=self.school_a, role="CANTEEN")
+        bursar_a = User.objects.create_user(
+            username="bur_a", password="StrongPassword123!", is_staff=True
+        )
+        StaffProfile.objects.create(user=bursar_a, school=self.school_a, role="BURSAR")
+
+        # POS attendant scoped to School A cannot search or charge School B
+        self.client.login(username="att_a", password="StrongPassword123!")
+        search_res = self.client.get("/api/pos/students/search/?q=Okello").json()
+        self.assertEqual(search_res["results"], [])
+        lookup_b = self.client.get("/api/student/lookup/?reg_no=ARA-0001")
+        self.assertEqual(lookup_b.status_code, 404)
+        charge_b = self.client.post(
+            "/api/canteen/checkout/",
+            data=json.dumps({
+                "student_reg_no": "ARA-0001",
+                "amount": 1000,
+                "pin": "5678",
+            }),
+            content_type="application/json",
+        )
+        self.assertEqual(charge_b.status_code, 403)
+
+        # Bursar scoped to School A sees only School A on report and cannot record School B cash
+        self.client.login(username="bur_a", password="StrongPassword123!")
+        rep_html = self.client.get("/report/daily/").content.decode()
+        self.assertIn("Kampala Model School", rep_html)
+        self.assertNotIn("Arua Academy", rep_html)
+
+        cash_b = self.client.post(
+            "/report/daily/",
+            {"student_reg_no": "ARA-0001", "amount": "5000", "receipt_note": "Cross school"},
+            follow=True,
+        )
+        self.assertIn("another school", cash_b.content.decode())
+        self.student_b.refresh_from_db()
+        self.assertEqual(self.student_b.wallet_balance, Decimal("8000.00"))
+
+    def test_parent_controls_limit_freeze_and_pin_change(self):
+        # 1. Parent sets daily limit to 2000, freezes card, and updates PIN to 2468
+        res_set = self.client.post(
+            "/api/parent/settings/",
+            data=json.dumps({
+                "student_reg_no": "KMS-0001",
+                "pin": "1234",
+                "daily_spend_limit": "2000",
+                "low_balance_threshold": "1000",
+                "parent_frozen": True,
+                "new_pin": "2468",
+            }),
+            content_type="application/json",
+        )
+        self.assertEqual(res_set.status_code, 200)
+        set_data = res_set.json()
+        self.assertTrue(set_data["parent_frozen"])
+        self.assertTrue(set_data["pin_changed"])
+        self.assertEqual(Decimal(set_data["daily_limit"]), Decimal("2000.00"))
+
+        # 2. Canteen checkout rejects frozen card even with new PIN
+        attendant = User.objects.create_user(username="pos_any", password="StrongPassword123!")
+        self.client.login(username="pos_any", password="StrongPassword123!")
+        frozen_res = self.client.post(
+            "/api/canteen/checkout/",
+            data=json.dumps({
+                "student_reg_no": "KMS-0001",
+                "amount": 1000,
+                "pin": "2468",
+            }),
+            content_type="application/json",
+        )
+        self.assertEqual(frozen_res.status_code, 403)
+        self.assertIn("frozen", frozen_res.json()["error"].lower())
+
+        # 3. Parent unfreezes using new PIN, then checkout succeeds within 2000 cap
+        unfreeze = self.client.post(
+            "/api/parent/settings/",
+            data=json.dumps({
+                "student_reg_no": "KMS-0001",
+                "pin": "2468",
+                "parent_frozen": False,
+            }),
+            content_type="application/json",
+        )
+        self.assertEqual(unfreeze.status_code, 200)
+        ok_res = self.client.post(
+            "/api/canteen/checkout/",
+            data=json.dumps({
+                "student_reg_no": "KMS-0001",
+                "amount": 1500,
+                "pin": "2468",
+            }),
+            content_type="application/json",
+        )
+        self.assertEqual(ok_res.status_code, 200)
+
+        bal_html = self.client.get("/parent/balance/").content.decode()
+        for snippet in ("dailyLimitSelect", "lowBalSelect", "freezeSelect", "newPinInput"):
+            self.assertIn(snippet, bal_html)
+
+    @patch("wallet.views.send_welcome_pin_sms")
+    def test_bursar_in_app_csv_import_offline_pos_queue_and_assetlinks(self, mock_welcome_sms):
+        from wallet.models import StaffProfile
+
+        bursar_a = User.objects.create_user(
+            username="bur_csv", password="StrongPassword123!", is_staff=True
+        )
+        StaffProfile.objects.create(user=bursar_a, school=self.school_a, role="BURSAR")
+        self.client.login(username="bur_csv", password="StrongPassword123!")
+
+        tpl = self.client.get("/report/import-students/?template=csv")
+        self.assertEqual(tpl.status_code, 200)
+        self.assertIn("full_name,class_stream", tpl.content.decode())
+
+        csv_upload = SimpleUploadedFile(
+            "students.csv",
+            b"full_name,class_stream,parent_phone,pin\nSarah Mutesi,S.1 North,0772888999,\n",
+            content_type="text/csv",
+        )
+        res_imp = self.client.post(
+            "/report/import-students/",
+            {"csv_file": csv_upload},
+        )
+        self.assertEqual(res_imp.status_code, 200)
+        html = res_imp.content.decode()
+        self.assertIn("Sarah Mutesi", html)
+        self.assertIn("KMS-0002", html)
+        self.assertIn("/report/import-students/", html)
+        mock_welcome_sms.assert_called_once()
+
+        # POS offline queue + TWA assetlinks endpoint
+        pos_html = self.client.get("/pos/").content.decode()
+        for snippet in ("offlineQueueBar", "syncOfflineQueue", "enqueueOfflineCharge"):
+            self.assertIn(snippet, pos_html)
+
+        al_res = self.client.get("/.well-known/assetlinks.json")
+        self.assertEqual(al_res.status_code, 200)
+        self.assertEqual(al_res.json(), [])

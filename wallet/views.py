@@ -31,18 +31,22 @@ from .aggregator_service import (
     reconcile_pending_topups,
     verify_and_credit_flw_topup,
 )
+from .import_service import import_students_csv
 from .models import (
     BursarCashTopUp,
     CanteenOrder,
     CanteenRefund,
     School,
     SchoolOnboardingRequest,
+    StaffProfile,
     Student,
     WalletTopUp,
 )
 from .sms_service import (
     send_canteen_purchase_sms,
+    send_low_balance_alert_sms,
     send_pin_lockout_alert_sms,
+    send_welcome_pin_sms,
 )
 
 logger = logging.getLogger(__name__)
@@ -59,6 +63,24 @@ def _client_ip(request) -> str:
     if xff:
         return xff.split(",")[0].strip() or "unknown"
     return (request.META.get("REMOTE_ADDR") or "").strip() or "unknown"
+
+
+def _user_scoped_school(user):
+    """
+    Returns the assigned School for school-scoped staff accounts,
+    or None for superusers / unscoped staff accounts (preserving global access).
+    """
+    if (
+        not user
+        or not getattr(user, "is_authenticated", False)
+        or getattr(user, "is_superuser", False)
+    ):
+        return None
+    try:
+        profile = user.staff_profile
+    except (StaffProfile.DoesNotExist, AttributeError):
+        return None
+    return profile.school if profile.school_id else None
 
 
 def normalize_ug_phone(phone: str) -> str:
@@ -211,16 +233,33 @@ def canteen_checkout(request):
         )
 
     try:
+        scoped_school = _user_scoped_school(request.user)
         with transaction.atomic():
             student = (
                 Student.objects.select_for_update()
                 .select_related("school")
                 .get(student_reg_no__iexact=reg_no, is_active=True)
             )
+            if scoped_school is not None and student.school_id != scoped_school.id:
+                return JsonResponse(
+                    {"error": "This student belongs to another school."},
+                    status=403,
+                )
 
             pin_error = _verify_pin_or_lockout(student, raw_pin)
             if pin_error is not None:
                 return pin_error
+
+            if student.parent_frozen:
+                return JsonResponse(
+                    {
+                        "error": (
+                            "Card frozen by parent. Unfreeze on the Parent Portal "
+                            "or contact the school bursar."
+                        )
+                    },
+                    status=403,
+                )
 
             if idempotency_key:
                 existing_order = CanteenOrder.objects.filter(
@@ -283,7 +322,18 @@ def canteen_checkout(request):
                 )
 
             student.wallet_balance -= amount
-            student.save(update_fields=["wallet_balance"])
+            threshold = student.effective_low_balance_threshold()
+            update_fields = ["wallet_balance"]
+            send_low_bal = False
+            if (
+                threshold > 0
+                and student.wallet_balance <= threshold
+                and not student.low_balance_alert_sent
+            ):
+                student.low_balance_alert_sent = True
+                update_fields.append("low_balance_alert_sent")
+                send_low_bal = True
+            student.save(update_fields=update_fields)
 
             order = CanteenOrder.objects.create(
                 student=student,
@@ -295,12 +345,15 @@ def canteen_checkout(request):
 
             parent_phone = student.parent_phone
             student_name = student.full_name
+            student_code = student.student_reg_no
             amount_str = str(order.amount)
             items_copy = order.items_note
             new_balance_str = str(student.wallet_balance)
             order_ref = str(order.id)[:8].upper()
-            transaction.on_commit(
-                lambda: send_canteen_purchase_sms(
+            threshold_str = str(threshold)
+
+            def _after_checkout_sms():
+                send_canteen_purchase_sms(
                     parent_phone=parent_phone,
                     student_name=student_name,
                     amount_spent=amount_str,
@@ -308,7 +361,16 @@ def canteen_checkout(request):
                     new_balance=new_balance_str,
                     order_ref=order_ref,
                 )
-            )
+                if send_low_bal:
+                    send_low_balance_alert_sms(
+                        parent_phone=parent_phone,
+                        student_name=student_name,
+                        code=student_code,
+                        current_balance=new_balance_str,
+                        threshold=threshold_str,
+                    )
+
+            transaction.on_commit(_after_checkout_sms)
 
         return JsonResponse(
             {
@@ -320,6 +382,7 @@ def canteen_checkout(request):
                 "amount": str(order.amount),
                 "items_note": order.items_note,
                 "new_balance": str(student.wallet_balance),
+                "low_balance_alert": send_low_bal,
             },
             status=200,
         )
@@ -560,16 +623,33 @@ def check_student_balance(request):
         return JsonResponse({"error": "CanteenPay code is required."}, status=400)
 
     try:
+        scoped_school = _user_scoped_school(request.user)
         with transaction.atomic():
             student = (
                 Student.objects.select_for_update()
                 .select_related("school")
                 .get(student_reg_no__iexact=reg_no, is_active=True)
             )
+            if scoped_school is not None and student.school_id != scoped_school.id:
+                return JsonResponse(
+                    {"error": "This student belongs to another school."},
+                    status=403,
+                )
 
             pin_error = _verify_pin_or_lockout(student, raw_pin)
             if pin_error is not None:
                 return pin_error
+
+            if student.parent_frozen:
+                return JsonResponse(
+                    {
+                        "error": (
+                            "Card frozen by parent. Unfreeze on the Parent Portal "
+                            "or contact the school bursar."
+                        )
+                    },
+                    status=403,
+                )
 
             today = timezone.localdate()
             spent_today = _student_net_spent_today(student, today)
@@ -609,9 +689,12 @@ def parent_topup_page(request):
 @login_required(login_url="/staff/login/")
 def canteen_pos_page(request):
     today = timezone.localdate()
+    scoped_school = _user_scoped_school(request.user)
     shift_qs = CanteenOrder.objects.filter(
         attendant=request.user, created_at__date=today
     )
+    if scoped_school is not None:
+        shift_qs = shift_qs.filter(student__school=scoped_school)
     shift_agg = shift_qs.aggregate(total=Sum("amount"), count=Count("id"))
     recent_orders = [
         {
@@ -628,6 +711,7 @@ def canteen_pos_page(request):
         request,
         "wallet/canteen_pos.html",
         {
+            "scoped_school": scoped_school,
             "shift_total": int(shift_agg["total"] or 0),
             "shift_count": shift_agg["count"] or 0,
             "recent_orders_json": json.dumps(recent_orders),
@@ -638,7 +722,7 @@ def canteen_pos_page(request):
 @require_GET
 @never_cache
 def pos_manifest(request):
-    """Web App Manifest so Android Chrome installs /pos/ as a standalone PWA."""
+    """Web App Manifest so Android Chrome / Play Store TWA installs /pos/ as a standalone PWA."""
     manifest = {
         "name": "CanteenPay POS",
         "short_name": "CanteenPay",
@@ -650,6 +734,8 @@ def pos_manifest(request):
         "orientation": "portrait",
         "background_color": "#111827",
         "theme_color": "#0f172a",
+        "categories": ["finance", "business", "education"],
+        "prefer_related_applications": False,
         "icons": [
             {
                 "src": static("wallet/icons/icon-192.png"),
@@ -672,6 +758,20 @@ def pos_manifest(request):
         ],
     }
     return JsonResponse(manifest, content_type="application/manifest+json")
+
+
+@require_GET
+@never_cache
+def assetlinks_json(request):
+    """Digital Asset Links verification endpoint for Android Play Store TWA packaging."""
+    raw = (getattr(settings, "ASSETLINKS_JSON", "") or "").strip()
+    if raw:
+        try:
+            payload = json.loads(raw)
+            return JsonResponse(payload, safe=False)
+        except json.JSONDecodeError:
+            pass
+    return JsonResponse([], safe=False)
 
 
 @require_GET
@@ -739,15 +839,18 @@ self.addEventListener("fetch", (event) => {{
 def pos_student_search(request):
     """
     Logged-in till lookup by wallet code or student name.
-    The public parent page stays code-only and does not use this endpoint.
+    Respects school scoping when the staff account is bound to a school.
     """
     query = (request.GET.get("q") or "").strip()
     if len(query) < 2:
         return JsonResponse({"results": []})
 
+    students = Student.objects.filter(is_active=True)
+    scoped_school = _user_scoped_school(request.user)
+    if scoped_school is not None:
+        students = students.filter(school=scoped_school)
     students = (
-        Student.objects.filter(is_active=True)
-        .filter(Q(student_reg_no__icontains=query) | Q(full_name__icontains=query))
+        students.filter(Q(student_reg_no__icontains=query) | Q(full_name__icontains=query))
         .select_related("school")
         .order_by("full_name")[:15]
     )
@@ -795,9 +898,13 @@ def wallet_cards_page(request):
         .select_related("school")
         .order_by("school__name", "class_stream", "full_name")
     )
-    school_id = (request.GET.get("school") or "").strip()
-    if school_id:
-        students = students.filter(school_id=school_id)
+    scoped_school = _user_scoped_school(request.user)
+    if scoped_school is not None:
+        students = students.filter(school=scoped_school)
+    else:
+        school_id = (request.GET.get("school") or "").strip()
+        if school_id:
+            students = students.filter(school_id=school_id)
     return render(
         request,
         "wallet/wallet_cards.html",
@@ -921,6 +1028,18 @@ def parent_balance_lookup(request):
                 "school": student.school.name,
                 "wallet_balance": str(student.wallet_balance),
                 "daily_limit": str(daily_limit),
+                "daily_spend_limit_custom": (
+                    int(student.daily_spend_limit) if student.daily_spend_limit is not None else None
+                ),
+                "school_daily_limit": int(student.school.daily_spend_limit),
+                "low_balance_threshold": int(student.effective_low_balance_threshold()),
+                "low_balance_threshold_custom": (
+                    int(student.low_balance_threshold)
+                    if student.low_balance_threshold is not None
+                    else None
+                ),
+                "school_low_balance_threshold": int(student.school.low_balance_threshold),
+                "parent_frozen": student.parent_frozen,
                 "spent_today": str(spent_today),
                 "remaining_daily_limit": str(remaining_daily),
                 "recent_activity": [item for _, item in activity[:5]],
@@ -933,6 +1052,123 @@ def parent_balance_lookup(request):
         logger.exception("Unexpected error in parent_balance_lookup for %s", reg_no)
         return JsonResponse(
             {"error": "Unable to check balance right now. Please try again."},
+            status=500,
+        )
+
+
+def _parse_optional_ugx_setting(raw_val, min_val: int, max_val: int, label: str):
+    """Returns (Decimal_or_None, error_message_or_None)."""
+    if raw_val is None or str(raw_val).strip() == "":
+        return None, None
+    try:
+        dec = Decimal(str(raw_val).replace(",", "").strip())
+    except (InvalidOperation, ValueError, TypeError):
+        return None, f"Invalid {label}."
+    if dec != dec.to_integral_value() or dec < min_val or dec > max_val:
+        return None, f"{label} must be a whole UGX amount between {min_val:,} and {max_val:,}."
+    return dec, None
+
+
+@require_POST
+def parent_wallet_settings(request):
+    """
+    Allows PIN-authenticated parents to configure daily spending cap, low-balance
+    SMS threshold, freeze/unfreeze card, or change their child's 4-digit PIN.
+    """
+    if _is_ip_rate_limited(request, "parent_set_rl"):
+        return JsonResponse(
+            {"error": "Too many attempts. Please wait a minute."},
+            status=429,
+        )
+
+    data = _parse_json_body(request)
+    if data is None:
+        return JsonResponse({"error": "Invalid request payload."}, status=400)
+
+    reg_no = str(data.get("student_reg_no", "")).strip()
+    raw_pin = str(data.get("pin", "")).strip()
+    if not reg_no or not raw_pin:
+        return JsonResponse(
+            {"error": "CanteenPay code and current 4-digit PIN are required."},
+            status=400,
+        )
+
+    daily_limit_val, daily_err = (None, None)
+    if "daily_spend_limit" in data:
+        daily_limit_val, daily_err = _parse_optional_ugx_setting(
+            data.get("daily_spend_limit"), 500, 500000, "daily spending limit"
+        )
+        if daily_err:
+            return JsonResponse({"error": daily_err}, status=400)
+
+    low_bal_val, low_bal_err = (None, None)
+    if "low_balance_threshold" in data:
+        low_bal_val, low_bal_err = _parse_optional_ugx_setting(
+            data.get("low_balance_threshold"), 0, 200000, "low-balance alert threshold"
+        )
+        if low_bal_err:
+            return JsonResponse({"error": low_bal_err}, status=400)
+
+    new_pin = str(data.get("new_pin") or "").strip()
+    if new_pin and (not new_pin.isdigit() or len(new_pin) != 4):
+        return JsonResponse(
+            {"error": "New PIN must be exactly 4 digits (e.g. 4820)."},
+            status=400,
+        )
+
+    try:
+        with transaction.atomic():
+            student = (
+                Student.objects.select_for_update()
+                .select_related("school")
+                .get(student_reg_no__iexact=reg_no, is_active=True)
+            )
+            pin_error = _verify_pin_or_lockout(student, raw_pin)
+            if pin_error is not None:
+                return pin_error
+
+            update_fields = []
+            if "daily_spend_limit" in data:
+                student.daily_spend_limit = daily_limit_val
+                update_fields.append("daily_spend_limit")
+            if "low_balance_threshold" in data:
+                student.low_balance_threshold = low_bal_val
+                update_fields.append("low_balance_threshold")
+                if student.maybe_reset_low_balance_flag():
+                    update_fields.append("low_balance_alert_sent")
+            if "parent_frozen" in data:
+                student.parent_frozen = bool(data.get("parent_frozen"))
+                update_fields.append("parent_frozen")
+            if new_pin:
+                student.set_pin(new_pin)
+                update_fields.append("pin_hash")
+
+            if update_fields:
+                student.save(update_fields=update_fields)
+
+            today = timezone.localdate()
+            spent_today = _student_net_spent_today(student, today)
+            effective_limit = student.effective_daily_spend_limit()
+            remaining_daily = max(effective_limit - spent_today, Decimal("0.00"))
+
+        return JsonResponse(
+            {
+                "status": "UPDATED",
+                "message": "Wallet settings saved.",
+                "daily_limit": str(effective_limit),
+                "remaining_daily_limit": str(remaining_daily),
+                "low_balance_threshold": int(student.effective_low_balance_threshold()),
+                "parent_frozen": student.parent_frozen,
+                "pin_changed": bool(new_pin),
+            },
+            status=200,
+        )
+    except Student.DoesNotExist:
+        return JsonResponse({"error": "Student ID not found or inactive."}, status=404)
+    except Exception:
+        logger.exception("Unexpected error in parent_wallet_settings for %s", reg_no)
+        return JsonResponse(
+            {"error": "Unable to save settings right now. Please try again."},
             status=500,
         )
 
@@ -1015,10 +1251,14 @@ def lookup_student(request):
         )
 
     reg_no = request.GET.get("reg_no", "").strip()
+    scoped_school = _user_scoped_school(request.user)
     try:
-        student = Student.objects.select_related("school").get(
+        qs = Student.objects.select_related("school").filter(
             student_reg_no__iexact=reg_no, is_active=True
         )
+        if scoped_school is not None:
+            qs = qs.filter(school=scoped_school)
+        student = qs.get()
         return JsonResponse(
             {
                 "full_name": student.full_name,
@@ -1121,7 +1361,7 @@ def _build_settlement_csv(
     return response
 
 
-def _handle_bursar_refund_post(request, report_date):
+def _handle_bursar_refund_post(request, report_date, scoped_school=None):
     """Processes an audited in-page full order refund from the Bursar Daily Report."""
     order_id = (request.POST.get("order_id") or "").strip()
     reason = (request.POST.get("refund_reason") or "").strip()[:255]
@@ -1138,6 +1378,9 @@ def _handle_bursar_refund_post(request, report_date):
         )
         if order is None:
             messages.error(request, "Canteen order not found.")
+            return redirect(f"{request.path}?date={report_date:%Y-%m-%d}")
+        if scoped_school is not None and order.student.school_id != scoped_school.id:
+            messages.error(request, "You cannot refund an order from another school.")
             return redirect(f"{request.path}?date={report_date:%Y-%m-%d}")
         if CanteenRefund.objects.filter(order=order).exists():
             messages.error(request, "This canteen order has already been refunded.")
@@ -1166,14 +1409,16 @@ def bursar_daily_report(request):
     Displays today's online top-ups, bursar desk cash top-ups, and canteen sales,
     and processes audited physical cash-in deposits or in-page refunds from the bursar desk.
     Runs a lightweight reconciliation pass on PENDING top-ups each GET load.
+    Respects school scoping when the staff account is bound to a school.
     """
     report_date = _parse_report_date(
         request.GET.get("date") or request.POST.get("report_date")
     )
+    scoped_school = _user_scoped_school(request.user)
 
     if request.method == "POST":
         if (request.POST.get("action") or "").strip() == "refund_order":
-            return _handle_bursar_refund_post(request, report_date)
+            return _handle_bursar_refund_post(request, report_date, scoped_school=scoped_school)
 
         reg_no = (request.POST.get("student_reg_no") or "").strip()
         receipt_note = (request.POST.get("receipt_note") or "").strip()[:255]
@@ -1198,6 +1443,9 @@ def bursar_daily_report(request):
             )
             if student is None:
                 messages.error(request, f"Active student '{reg_no}' was not found.")
+                return redirect(f"{request.path}?date={report_date:%Y-%m-%d}")
+            if scoped_school is not None and student.school_id != scoped_school.id:
+                messages.error(request, "You cannot record cash deposits for another school.")
                 return redirect(f"{request.path}?date={report_date:%Y-%m-%d}")
 
             recent_cutoff = timezone.now() - timedelta(seconds=DOUBLE_TAP_WINDOW_SECONDS)
@@ -1229,8 +1477,13 @@ def bursar_daily_report(request):
 
     _run_inline_reconciliation("bursar_daily_report")
 
+    schools_qs = (
+        School.objects.filter(pk=scoped_school.pk)
+        if scoped_school is not None
+        else School.objects.all()
+    )
     schools_data = []
-    for school in School.objects.all():
+    for school in schools_qs:
         orders_qs = CanteenOrder.objects.filter(
             student__school=school, created_at__date=report_date
         )
@@ -1276,21 +1529,20 @@ def bursar_daily_report(request):
             }
         )
 
+    cash_filter_qs = BursarCashTopUp.objects.filter(created_at__date=report_date)
+    orders_filter_qs = CanteenOrder.objects.filter(created_at__date=report_date)
+    if scoped_school is not None:
+        cash_filter_qs = cash_filter_qs.filter(student__school=scoped_school)
+        orders_filter_qs = orders_filter_qs.filter(student__school=scoped_school)
+
     recent_cash_topups = (
-        BursarCashTopUp.objects.filter(created_at__date=report_date)
-        .select_related("student", "student__school", "received_by")
+        cash_filter_qs.select_related("student", "student__school", "received_by")
         .order_by("-created_at")[:50]
     )
-    total_cash_collected = (
-        BursarCashTopUp.objects.filter(created_at__date=report_date).aggregate(
-            total=Sum("amount")
-        )["total"]
-        or Decimal("0.00")
-    )
+    total_cash_collected = cash_filter_qs.aggregate(total=Sum("amount"))["total"] or Decimal("0.00")
 
     attendant_rows = (
-        CanteenOrder.objects.filter(created_at__date=report_date)
-        .values("attendant__username")
+        orders_filter_qs.values("attendant__username")
         .annotate(total_sales=Sum("amount"), order_count=Count("id"))
         .order_by("-total_sales")
     )
@@ -1304,8 +1556,7 @@ def bursar_daily_report(request):
     ]
 
     item_rows = (
-        CanteenOrder.objects.filter(created_at__date=report_date)
-        .values("items_note")
+        orders_filter_qs.values("items_note")
         .annotate(total_amount=Sum("amount"), order_count=Count("id"))
         .order_by("-total_amount")[:15]
     )
@@ -1319,8 +1570,7 @@ def bursar_daily_report(request):
     ]
 
     daily_orders = (
-        CanteenOrder.objects.filter(created_at__date=report_date)
-        .select_related("student", "student__school", "attendant", "refund")
+        orders_filter_qs.select_related("student", "student__school", "attendant", "refund")
         .order_by("-created_at")[:50]
     )
 
@@ -1333,6 +1583,7 @@ def bursar_daily_report(request):
         request,
         "wallet/bursar_report.html",
         {
+            "scoped_school": scoped_school,
             "report_date": report_date,
             "schools_data": schools_data,
             "attendant_breakdown": attendant_breakdown,
@@ -1340,6 +1591,74 @@ def bursar_daily_report(request):
             "daily_orders": daily_orders,
             "recent_cash_topups": recent_cash_topups,
             "total_cash_collected": total_cash_collected,
+        },
+    )
+
+
+@staff_member_required(login_url="/staff/login/")
+def bursar_import_students(request):
+    """
+    In-app bulk CSV student onboarding for bursars without needing Django Admin.
+    Respects school scoping when StaffProfile assigns a school.
+    """
+    if (request.GET.get("template") or "").strip().lower() == "csv":
+        buf = io.StringIO()
+        writer = csv.writer(buf)
+        writer.writerow(["full_name", "class_stream", "parent_phone", "pin"])
+        writer.writerow(["Namukasa Grace", "S.2 East", "0772111222", ""])
+        writer.writerow(["Okello Peter", "S.1 West", "0752333444", "4820"])
+        res = HttpResponse(buf.getvalue(), content_type="text/csv; charset=utf-8")
+        res["Content-Disposition"] = 'attachment; filename="canteenpay-students-template.csv"'
+        return res
+
+    scoped_school = _user_scoped_school(request.user)
+    schools = (
+        School.objects.filter(pk=scoped_school.pk)
+        if scoped_school is not None
+        else School.objects.order_by("name")
+    )
+
+    if request.method == "POST":
+        school_id = (request.POST.get("school_id") or "").strip()
+        school = scoped_school or School.objects.filter(pk=school_id).first()
+        csv_upload = request.FILES.get("csv_file")
+        if school is None:
+            messages.error(request, "Please select a valid school.")
+        elif csv_upload is None:
+            messages.error(request, "Please choose a CSV file to upload.")
+        else:
+            try:
+                decoded = csv_upload.read().decode("utf-8-sig")
+            except UnicodeDecodeError:
+                messages.error(request, "Could not read file as UTF-8 CSV.")
+            else:
+                result = import_students_csv(
+                    school, decoded, send_sms_fn=send_welcome_pin_sms
+                )
+                if result["header_error"]:
+                    messages.error(request, result["header_error"])
+                else:
+                    return render(
+                        request,
+                        "wallet/pin_slip.html",
+                        {
+                            "title": "One-Time Take-Home PIN Slips",
+                            "slips": result["slips"],
+                            "errors": result["errors"],
+                            "created_count": result["created_count"],
+                            "updated_count": result["updated_count"],
+                            "single": False,
+                            "back_url": "/report/import-students/",
+                            "back_label": "Back to Bursar CSV Import",
+                        },
+                    )
+
+    return render(
+        request,
+        "wallet/bursar_import.html",
+        {
+            "scoped_school": scoped_school,
+            "schools": schools,
         },
     )
 
@@ -1354,6 +1673,7 @@ def daily_topup_noticeboard(request):
     """
     _run_inline_reconciliation("daily_topup_noticeboard")
     report_date = _parse_report_date(request.GET.get("date"))
+    scoped_school = _user_scoped_school(request.user)
 
     online_student_ids = WalletTopUp.objects.filter(
         status="SUCCESSFUL", created_at__date=report_date
@@ -1363,12 +1683,14 @@ def daily_topup_noticeboard(request):
         created_at__date=report_date
     ).values_list("student_id", flat=True)
 
+    credited_students = Student.objects.filter(
+        Q(id__in=online_student_ids) | Q(id__in=cash_student_ids),
+        is_active=True,
+    )
+    if scoped_school is not None:
+        credited_students = credited_students.filter(school=scoped_school)
     credited_students = (
-        Student.objects.filter(
-            Q(id__in=online_student_ids) | Q(id__in=cash_student_ids),
-            is_active=True,
-        )
-        .select_related("school")
+        credited_students.select_related("school")
         .distinct()
         .order_by("school__name", "full_name")
     )

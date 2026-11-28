@@ -45,10 +45,11 @@
     <div class="header">
         <div>
             <h2 style="margin:0;">Daily Canteen &amp; Pocket Money Settlement</h2>
-            <p style="margin:4px 0 0; color:#6b7280;">Date: <strong>{{ report_date }}</strong></p>
+            <p style="margin:4px 0 0; color:#6b7280;">Date: <strong>{{ report_date }}</strong>{% if scoped_school %} &middot; School: <strong>{{ scoped_school.name }}</strong>{% endif %}</p>
         </div>
         <div class="no-print" style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
             <a href="{% url 'canteen_pos_page' %}" class="btn" style="background:#0f766e; text-decoration:none;">POS</a>
+            <a href="{% url 'bursar_import_students' %}" class="btn" style="background:#7c3aed; text-decoration:none;">Import CSV</a>
             <a href="{% url 'daily_topup_noticeboard' %}" class="btn" style="background:#374151; text-decoration:none;">Noticeboard</a>
             <a href="{% url 'wallet_cards_page' %}" class="btn" style="background:#374151; text-decoration:none;">Wallet Cards</a>
             <a href="{% url 'password_change' %}" class="btn" style="background:#374151; text-decoration:none;">Password</a>

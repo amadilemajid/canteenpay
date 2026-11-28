@@ -30,6 +30,12 @@ class School(models.Model):
     daily_spend_limit = models.DecimalField(
         max_digits=10, decimal_places=2, default=Decimal("5000.00")
     )
+    low_balance_threshold = models.DecimalField(
+        max_digits=10,
+        decimal_places=2,
+        default=Decimal("2000.00"),
+        help_text="Send a low-balance SMS alert when a student's balance drops at or below this UGX amount (0 disables).",
+    )
     created_at = models.DateTimeField(auto_now_add=True)
 
     def save(self, *args, **kwargs):
@@ -98,6 +104,18 @@ class Student(models.Model):
         blank=True,
         help_text="Optional daily spend cap in UGX for this student. Leave blank to use the school's default limit.",
     )
+    low_balance_threshold = models.DecimalField(
+        max_digits=10,
+        decimal_places=2,
+        null=True,
+        blank=True,
+        help_text="Optional low-balance SMS threshold in UGX (0 disables alerts). Leave blank to use the school default.",
+    )
+    low_balance_alert_sent = models.BooleanField(default=False)
+    parent_frozen = models.BooleanField(
+        default=False,
+        help_text="Parents can temporarily freeze a lost card from the Parent Portal.",
+    )
     failed_pin_attempts = models.PositiveSmallIntegerField(default=0)
     pin_locked_until = models.DateTimeField(null=True, blank=True)
     is_active = models.BooleanField(default=True)
@@ -106,6 +124,18 @@ class Student(models.Model):
         if self.daily_spend_limit is not None:
             return self.daily_spend_limit
         return self.school.daily_spend_limit
+
+    def effective_low_balance_threshold(self) -> Decimal:
+        if self.low_balance_threshold is not None:
+            return self.low_balance_threshold
+        return self.school.low_balance_threshold
+
+    def maybe_reset_low_balance_flag(self):
+        """Resets low_balance_alert_sent once balance rises above threshold."""
+        if self.low_balance_alert_sent and self.wallet_balance > self.effective_low_balance_threshold():
+            self.low_balance_alert_sent = False
+            return True
+        return False
 
     def set_pin(self, raw_pin: str):
         self.pin_hash = make_password(raw_pin)
@@ -200,9 +230,16 @@ class CanteenRefund(models.Model):
 
         self.clean()
         with transaction.atomic():
-            student = Student.objects.select_for_update().get(pk=self.order.student_id)
+            student = (
+                Student.objects.select_for_update()
+                .select_related("school")
+                .get(pk=self.order.student_id)
+            )
             student.wallet_balance += self.amount
-            student.save(update_fields=["wallet_balance"])
+            update_fields = ["wallet_balance"]
+            if student.maybe_reset_low_balance_flag():
+                update_fields.append("low_balance_alert_sent")
+            student.save(update_fields=update_fields)
             super().save(*args, **kwargs)
 
             parent_phone = student.parent_phone
@@ -253,9 +290,16 @@ class BursarCashTopUp(models.Model):
 
         self.clean()
         with transaction.atomic():
-            student = Student.objects.select_for_update().get(pk=self.student_id)
+            student = (
+                Student.objects.select_for_update()
+                .select_related("school")
+                .get(pk=self.student_id)
+            )
             student.wallet_balance += self.amount
-            student.save(update_fields=["wallet_balance"])
+            update_fields = ["wallet_balance"]
+            if student.maybe_reset_low_balance_flag():
+                update_fields.append("low_balance_alert_sent")
+            student.save(update_fields=update_fields)
             super().save(*args, **kwargs)
 
             parent_phone = student.parent_phone
@@ -283,6 +327,33 @@ class BursarCashTopUp(models.Model):
 
     def __str__(self):
         return f"Cash {self.student.student_reg_no} - UGX {self.amount}"
+
+
+class StaffProfile(models.Model):
+    ROLE_CHOICES = [
+        ("CANTEEN", "Canteen Attendant"),
+        ("BURSAR", "School Bursar"),
+        ("HEADTEACHER", "Headteacher / Auditor"),
+    ]
+    user = models.OneToOneField(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="staff_profile",
+    )
+    school = models.ForeignKey(
+        School,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="staff_members",
+        help_text="Assign a school to restrict this staff account strictly to that school's students and reports.",
+    )
+    role = models.CharField(max_length=20, choices=ROLE_CHOICES, default="CANTEEN")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        school_label = self.school.name if self.school_id else "All Schools (Global)"
+        return f"{self.user.username} - {school_label} ({self.role})"
 
 
 class SchoolOnboardingRequest(models.Model):

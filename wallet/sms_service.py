@@ -143,6 +143,26 @@ def send_pin_lockout_alert_sms(parent_phone: str, student_name: str, code: str):
     return _send_sms(parent_phone, message)
 
 
+def send_low_balance_alert_sms(
+    parent_phone: str,
+    student_name: str,
+    code: str,
+    current_balance: str,
+    threshold: str,
+):
+    """Proactively alerts a parent when their child's canteen wallet balance runs low."""
+    if not is_valid_phone(parent_phone):
+        return None
+
+    balance_int = int(Decimal(str(current_balance)))
+    threshold_int = int(Decimal(str(threshold)))
+    message = (
+        f"CanteenPay Low Balance Alert: {student_name} ({code}) now has UGX {balance_int:,} left "
+        f"(below UGX {threshold_int:,}). Top up via Mobile Money anytime using code {code}."
+    )
+    return _send_sms(parent_phone, message)
+
+
 def _send_sms(parent_phone: str, message: str):
     if not is_valid_phone(parent_phone):
         return None

@@ -141,7 +141,7 @@
     <div class="container">
         <div class="no-print">
             <button type="button" onclick="window.print()">Print PIN slips (A4)</button>
-            <a href="/admin/wallet/student/">Back to Students</a>
+            <a href="{{ back_url|default:'/admin/wallet/student/' }}">{{ back_label|default:"Back to Students" }}</a>
         </div>
 
         <div class="banner">

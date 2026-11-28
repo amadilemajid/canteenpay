@@ -142,9 +142,16 @@ def verify_and_credit_flw_topup(reference_id):
             topup.status = "SUCCESSFUL"
             topup.save(update_fields=["status"])
 
-            student = Student.objects.select_for_update().get(id=topup.student_id)
+            student = (
+                Student.objects.select_for_update()
+                .select_related("school")
+                .get(id=topup.student_id)
+            )
             student.wallet_balance += topup.amount
-            student.save(update_fields=["wallet_balance"])
+            update_fields = ["wallet_balance"]
+            if student.maybe_reset_low_balance_flag():
+                update_fields.append("low_balance_alert_sent")
+            student.save(update_fields=update_fields)
 
             short_ref = str(topup.momo_reference_id)[:8].upper()
             parent_phone = student.parent_phone

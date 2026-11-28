@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CanteenPay | Bursar Bulk Student Import</title>
+    <style>
+        :root {
+            --bg: #f9fafb; --card: #ffffff; --text: #111827; --muted: #6b7280;
+            --border: #d1d5db; --input-bg: #ffffff; --input-txt: #111827;
+        }
+        [data-theme="dark"] {
+            --bg: #111827; --card: #1f2937; --text: #f9fafb; --muted: #9ca3af;
+            --border: #374151; --input-bg: #374151; --input-txt: #f9fafb;
+        }
+        * { box-sizing: border-box; }
+        body { font-family: system-ui, sans-serif; background: var(--bg); color: var(--text); margin: 0; padding: 24px; transition: background 0.2s, color 0.2s; }
+        .wrap { max-width: 620px; margin: 0 auto; background: var(--card); padding: 24px; border-radius: 12px; box-shadow: 0 2px 10px rgba(0,0,0,0.08); }
+        .top { display: flex; justify-content: space-between; align-items: center; gap: 10px; flex-wrap: wrap; border-bottom: 2px solid var(--border); padding-bottom: 12px; margin-bottom: 16px; }
+        .btn { padding: 8px 14px; border-radius: 7px; border: none; background: #111827; color: #fff; font-weight: 700; text-decoration: none; font-size: 0.85rem; cursor: pointer; }
+        [data-theme="dark"] .btn { background: #374151; }
+        label { display: block; font-weight: 600; margin: 14px 0 6px; font-size: 0.9rem; }
+        select, input[type="file"] { width: 100%; padding: 11px; border: 1px solid var(--border); border-radius: 8px; background: var(--input-bg); color: var(--input-txt); font-size: 0.95rem; }
+        .msg { padding: 11px 13px; border-radius: 7px; margin-bottom: 12px; font-weight: 600; font-size: 0.9rem; }
+        .msg-error { background: #fef2f2; color: #991b1b; border: 1px solid #f87171; }
+        .msg-success { background: #d1fae5; color: #065f46; border: 1px solid #10b981; }
+        .info { background: rgba(16, 185, 129, 0.08); border: 1px solid #10b981; border-radius: 8px; padding: 12px 14px; font-size: 0.88rem; line-height: 1.5; }
+    </style>
+</head>
+<body>
+<div class="wrap">
+    <div class="top">
+        <div>
+            <h2 style="margin:0;">Bulk Import Students (CSV)</h2>
+            <p style="margin:4px 0 0; color:var(--muted); font-size:0.86rem;">
+                {% if scoped_school %}School: <strong>{{ scoped_school.name }}</strong>{% else %}All Registered Schools{% endif %}
+            </p>
+        </div>
+        <div style="display:flex; gap:8px; flex-wrap:wrap;">
+            <a href="{% url 'bursar_daily_report' %}" class="btn">← Daily Report</a>
+            <a href="?template=csv" class="btn" style="background:#2563eb;">⬇ Sample CSV</a>
+            <button type="button" id="themeToggle" onclick="toggleTheme()" class="btn">🌙 Dark</button>
+        </div>
+    </div>
+
+    {% if messages %}
+        {% for message in messages %}
+            <div class="msg {% if message.tags == 'error' %}msg-error{% else %}msg-success{% endif %}">{{ message }}</div>
+        {% endfor %}
+    {% endif %}
+
+    <div class="info">
+        <strong>Required CSV columns:</strong> <code>full_name</code>, <code>class_stream</code>.<br>
+        <strong>Optional columns:</strong> <code>parent_phone</code> (for SMS receipts), <code>pin</code> (leave blank to auto-generate a secure 4-digit PIN), <code>student_reg_no</code>.<br>
+        After upload, printable A4 take-home PIN slips are generated automatically and welcome SMS alerts are sent to parents.
+    </div>
+
+    <form method="post" enctype="multipart/form-data">
+        {% csrf_token %}
+        {% if scoped_school %}
+            <input type="hidden" name="school_id" value="{{ scoped_school.id }}">
+        {% else %}
+            <label for="schoolId">Target School</label>
+            <select id="schoolId" name="school_id" required>
+                {% for s in schools %}
+                    <option value="{{ s.id }}">{{ s.name }} ({{ s.code_prefix }})</option>
+                {% endfor %}
+            </select>
+        {% endif %}
+
+        <label for="csvFile">Class List CSV File (.csv)</label>
+        <input type="file" id="csvFile" name="csv_file" accept=".csv,text/csv" required>
+
+        <button type="submit" class="btn" style="width:100%; margin-top:18px; padding:12px; background:#059669; font-size:1rem;">Upload &amp; Generate PIN Slips</button>
+    </form>
+</div>
+<script>
+const THEME_KEY = "canteenpay_theme";
+function applyTheme(dark) {
+    document.documentElement.setAttribute("data-theme", dark ? "dark" : "light");
+    document.getElementById("themeToggle").textContent = dark ? "☀️ Light" : "🌙 Dark";
+    try { localStorage.setItem(THEME_KEY, dark ? "dark" : "light"); } catch (_) {}
+}
+function toggleTheme() { applyTheme(document.documentElement.getAttribute("data-theme") !== "dark"); }
+(function () {
+    let saved = null;
+    try { saved = localStorage.getItem(THEME_KEY); } catch (_) {}
+    const prefersDark = saved ? saved === "dark" : window.matchMedia("(prefers-color-scheme: dark)").matches;
+    applyTheme(prefersDark);
+})();
+</script>
+</body>
+</html>

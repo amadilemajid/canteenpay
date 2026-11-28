@@ -135,6 +135,15 @@
             font-weight: 700; text-align: center;
         }
         #offlineBanner { background: #fef3c7; color: #92400e; border-bottom: 1px solid #f59e0b; }
+        #offlineQueueBar {
+            display: none; padding: 8px 14px; font-size: 0.84rem; font-weight: 700;
+            background: #eff6ff; color: #1e40af; border-bottom: 1px solid #3b82f6;
+            justify-content: center; align-items: center; gap: 10px; flex-wrap: wrap;
+        }
+        #offlineQueueBar button {
+            width: auto; margin: 0; padding: 4px 10px; font-size: 0.78rem;
+            border-radius: 6px; background: #2563eb; color: #fff;
+        }
         #sessionBanner { background: #fef2f2; color: #991b1b; border-bottom: 1px solid #ef4444; cursor: pointer; }
 
         /* ── Main card ── */
@@ -312,7 +321,7 @@
 <!-- ── Staff header bar ─────────────────────────────────────────────────── -->
 <div class="staff-bar">
     <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
-        <div class="attendant">🧑‍💼 Attendant: <span>{{ request.user.username }}</span></div>
+        <div class="attendant">🧑‍💼 Attendant: <span>{{ request.user.username }}</span>{% if scoped_school %} <span style="color:#93c5fd;">({{ scoped_school.code_prefix }})</span>{% endif %}</div>
         <div class="shift-pill" id="shiftSummary">🧾 Shift: UGX <span id="shiftTotal">{{ shift_total|default:0 }}</span> (<span id="shiftCount">{{ shift_count|default:0 }}</span>)</div>
     </div>
     <nav>
@@ -332,7 +341,12 @@
 </div>
 
 <!-- Offline & session banners -->
-<div id="offlineBanner" class="top-warn">⚠️ No internet connection — charges will fail until reconnected.</div>
+<div id="offlineBanner" class="top-warn">⚠️ No internet connection — charges can be queued offline and synced when internet returns.</div>
+<div id="offlineQueueBar">
+    <span id="offlineQueueLabel">⏳ 0 offline charges waiting to sync</span>
+    <button type="button" id="syncQueueBtn" onclick="syncOfflineQueue()">Sync Now</button>
+    <button type="button" style="background:#6b7280;" onclick="clearOfflineQueue()">Discard</button>
+</div>
 <div id="sessionBanner" class="top-warn" onclick="window.location.reload()">⏳ Idle over 2 hours — session may have expired. Tap here to refresh.</div>
 
 <!-- ── Main POS card ─────────────────────────────────────────────────────── -->
@@ -480,14 +494,113 @@
     }
 
     /* ═══════════════════════════════════════════════════════════════════════
-       Offline & Idle Session Detection
+       Offline, Queue Sync & Idle Session Detection
     ════════════════════════════════════════════════════════════════════════ */
+    const OFFLINE_QUEUE_KEY = "canteenpay_offline_queue";
+
+    function loadOfflineQueue() {
+        try {
+            const raw = localStorage.getItem(OFFLINE_QUEUE_KEY);
+            const parsed = raw ? JSON.parse(raw) : [];
+            return Array.isArray(parsed) ? parsed : [];
+        } catch (_) { return []; }
+    }
+
+    function saveOfflineQueue(items) {
+        try { localStorage.setItem(OFFLINE_QUEUE_KEY, JSON.stringify(items)); } catch (_) {}
+        renderOfflineQueueBar();
+    }
+
+    function renderOfflineQueueBar() {
+        const bar = document.getElementById("offlineQueueBar");
+        const label = document.getElementById("offlineQueueLabel");
+        const queue = loadOfflineQueue();
+        if (!queue.length) {
+            bar.style.display = "none";
+            return;
+        }
+        label.textContent = `⏳ ${queue.length} offline charge${queue.length === 1 ? "" : "s"} waiting to sync`;
+        bar.style.display = "flex";
+    }
+
+    function enqueueOfflineCharge(payload) {
+        const queue = loadOfflineQueue();
+        queue.push({ ...payload, queued_at: new Date().toISOString() });
+        saveOfflineQueue(queue);
+    }
+
+    function clearOfflineQueue() {
+        if (!confirm("Discard all unsynced offline charges from this device?")) return;
+        saveOfflineQueue([]);
+        showToast("Offline queue cleared.", "info", 2500);
+    }
+
+    let syncingOfflineQueue = false;
+    async function syncOfflineQueue() {
+        if (syncingOfflineQueue || !navigator.onLine) return;
+        const queue = loadOfflineQueue();
+        if (!queue.length) return;
+        syncingOfflineQueue = true;
+        const syncBtn = document.getElementById("syncQueueBtn");
+        if (syncBtn) { syncBtn.disabled = true; syncBtn.textContent = "Syncing…"; }
+
+        const remaining = [];
+        let syncedCount = 0;
+        let failedCount = 0;
+
+        for (let i = 0; i < queue.length; i++) {
+            const item = queue[i];
+            try {
+                const res = await fetch("/api/canteen/checkout/", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json", "X-CSRFToken": getCookie("csrftoken") },
+                    body: JSON.stringify({
+                        student_reg_no: item.student_reg_no,
+                        amount: item.amount,
+                        items_note: item.items_note || "",
+                        pin: item.pin,
+                        idempotency_key: item.idempotency_key
+                    })
+                });
+                const data = await res.json();
+                if (res.ok) {
+                    syncedCount++;
+                    if (!data.duplicate) {
+                        recordRecentSale({
+                            order_ref: data.order_ref || "",
+                            student_name: data.student_name || item.student_reg_no,
+                            student_reg_no: data.student_reg_no || item.student_reg_no,
+                            amount: Number(data.amount || item.amount),
+                            items_note: data.items_note || item.items_note || "",
+                            time: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: false }),
+                        });
+                    }
+                } else {
+                    failedCount++;
+                    showToast(`Sync rejected (${item.student_reg_no}): ${data.error || "Declined"}`, "err", 5500);
+                }
+            } catch (_) {
+                // Network dropped again — keep this and all later items in queue
+                remaining.push(...queue.slice(i));
+                break;
+            }
+        }
+        saveOfflineQueue(remaining);
+        if (syncedCount > 0) {
+            showToast(`✅ Synced ${syncedCount} offline sale${syncedCount === 1 ? "" : "s"}!`, "ok", 4500);
+        }
+        if (syncBtn) { syncBtn.disabled = false; syncBtn.textContent = "Sync Now"; }
+        syncingOfflineQueue = false;
+    }
+
     function updateOfflineBanner() {
         document.getElementById("offlineBanner").style.display = navigator.onLine ? "none" : "block";
     }
-    window.addEventListener("online",  () => { updateOfflineBanner(); showToast("Back online ✓", "ok", 3000); });
-    window.addEventListener("offline", () => { updateOfflineBanner(); showToast("⚠️ Offline — charges will fail until reconnected.", "warn", 6000); });
+    window.addEventListener("online",  () => { updateOfflineBanner(); showToast("Back online ✓ Syncing…", "ok", 3000); syncOfflineQueue(); });
+    window.addEventListener("offline", () => { updateOfflineBanner(); showToast("⚠️ Offline — charges will queue locally.", "warn", 6000); });
     updateOfflineBanner();
+    renderOfflineQueueBar();
+    window.addEventListener("load", () => { if (navigator.onLine) syncOfflineQueue(); });
 
     const IDLE_WARN_MS = 2 * 60 * 60 * 1000; // 2 hours
     let idleTimer = null;
@@ -1158,11 +1271,6 @@
             showToast(msg, "err", 3500);
             return;
         }
-        if (!navigator.onLine) {
-            showToast("⚠️ No internet connection — reconnect before charging.", "warn");
-            return;
-        }
-
         const payload = {
             student_reg_no:  regNo,
             amount:          String(amtNum),
@@ -1170,6 +1278,15 @@
             pin:             pin,
             idempotency_key: pendingIdempotencyKey
         };
+
+        if (!navigator.onLine) {
+            enqueueOfflineCharge(payload);
+            const qMsg = `📥 Offline: Queued UGX ${amtNum.toLocaleString("en-UG")} for ${regNo}. Will sync automatically when internet returns.`;
+            showAlert("ok", qMsg);
+            showToast(qMsg, "warn", 5000);
+            resetForNextStudent();
+            return;
+        }
 
         chargeBtn.disabled = true;
         chargeBtn.innerHTML = `<span class="btn-spinner"></span>Processing…`;
@@ -1190,6 +1307,9 @@
                 const okMsg = `✅ APPROVED!  New Balance: UGX ${newBal}`;
                 showAlert("ok", okMsg);
                 showToast(okMsg, "ok", 4000);
+                if (data.low_balance_alert) {
+                    showToast("⚠️ Low balance SMS alert sent to parent.", "warn", 4500);
+                }
                 if (!data.duplicate) {
                     recordRecentSale({
                         order_ref: data.order_ref || "",
@@ -1222,9 +1342,11 @@
                 showToast(errMsg, "err", 5000);
             }
         } catch {
-            const errMsg = "Network error. Please tap Charge again to retry safely.";
-            showAlert("err", errMsg);
-            showToast(errMsg, "err", 5000);
+            enqueueOfflineCharge(payload);
+            const errMsg = `📥 Network unreachable — queued UGX ${amtNum.toLocaleString("en-UG")} offline to sync automatically.`;
+            showAlert("ok", errMsg);
+            showToast(errMsg, "warn", 5000);
+            resetForNextStudent();
         } finally {
             chargeBtn.disabled = false;
             chargeBtn.textContent = "Charge Student Wallet";
